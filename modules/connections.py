@@ -43,7 +43,8 @@ from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QLabel, QPushButton, QComboBox,
     QLineEdit, QPlainTextEdit, QProgressBar, QVBoxLayout, QHBoxLayout,
-    QFormLayout, QGroupBox, QMessageBox, QCheckBox, QTabWidget
+    QFormLayout, QGroupBox, QMessageBox, QCheckBox, QTabWidget, QScrollArea,
+    QGridLayout, QSizePolicy
 )
 
 
@@ -298,216 +299,323 @@ class ConnectionsWidget(QWidget):
         self.adb = AdbService(self.settings.get("adb_path", "adb"))
         self._task: Optional[TaskThread] = None
         self._pending_success: Optional[Callable[[Any], None]] = None
+        self.completed_steps: set[int] = set()
+        self.current_step = 1
         self._build_ui()
         self._log(f"ADB útvonalbeállítás: {self.adb.adb_path}")
         self.refresh_devices()
 
     def _build_ui(self):
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(6, 5, 6, 5)
-        outer_layout.setSpacing(3)
+        outer_layout.setContentsMargins(8, 8, 8, 8)
+        outer_layout.setSpacing(6)
 
         self.tabs = QTabWidget(self)
         outer_layout.addWidget(self.tabs)
 
-        connections_page = QWidget(self.tabs)
-        root = QVBoxLayout(connections_page)
-        root.setContentsMargins(6, 5, 6, 5)
-        root.setSpacing(3)
-        self.tabs.addTab(connections_page, "Kapcsolatok és automatikus felderítés")
+        # Főoldal görgethető tartalommal: kis kijelzőn sem tűnik el funkció.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+        scroll.setWidget(page)
+        self.tabs.addTab(scroll, "Telefoncsatlakozás")
 
-        log_page = QWidget(self.tabs)
+        log_page = QWidget()
         log_layout = QVBoxLayout(log_page)
-        log_layout.setContentsMargins(6, 5, 6, 5)
-        log_layout.setSpacing(4)
-        self.tabs.addTab(log_page, "Log")
+        log_layout.setContentsMargins(8, 8, 8, 8)
+        log_layout.setSpacing(6)
+        self.tabs.addTab(log_page, "Kapcsolati napló")
 
-        title = QLabel("Kapcsolatok és automatikus felderítés")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        root.addWidget(title)
+        # Fejléc
+        header = QGroupBox()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        title_col = QVBoxLayout()
+        title = QLabel("ACC — Android Control Center")
+        title.setStyleSheet("font-size: 20px; font-weight: 700;")
+        subtitle = QLabel("Telefoncsatlakozás és kapcsolatkezelés")
+        subtitle.setStyleSheet("color: palette(mid); font-size: 12px;")
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+        header_layout.addLayout(title_col, 1)
+        self.overall_status = QLabel("0 / 7 lépés kész")
+        self.overall_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overall_status.setMinimumWidth(130)
+        self.overall_status.setStyleSheet(
+            "QLabel { padding: 8px 12px; border: 1px solid #7A8795; "
+            "border-radius: 7px; font-weight: 600; }"
+        )
+        header_layout.addWidget(self.overall_status)
+        root.addWidget(header)
 
-        # Kompakt, kéthasábos folyamatjelző: a hét lépés két oszlopban jelenik meg.
-        steps_group = QGroupBox("Kapcsolódás lépésről lépésre")
+        instruction = QLabel(
+            "A csatlakozáshoz haladj sorrendben az 1–7. lépésen. "
+            "A zöld gomb mutatja a következő teendőt; a pipa csak ellenőrzött siker után jelenik meg."
+        )
+        instruction.setWordWrap(True)
+        instruction.setStyleSheet("padding: 4px 2px; color: palette(text);")
+        root.addWidget(instruction)
+
+        # A fő vezérlő: bal oldalt kattintható lépésgombok, jobb oldalt állapot.
+        steps_group = QGroupBox("Csatlakozási folyamat — 7 kötelező lépés")
         steps_layout = QVBoxLayout(steps_group)
-        steps_layout.setContentsMargins(6, 4, 6, 4)
-        steps_layout.setSpacing(3)
-
+        steps_layout.setContentsMargins(8, 8, 8, 8)
+        steps_layout.setSpacing(5)
         self.step_texts = [
-            "1. ADB ellenőrzése és eszközlista frissítése",
-            "2. Telefon kiválasztása és shellkapcsolat tesztelése",
-            "3. Telefon IP-címeinek felderítése USB-n",
-            "4. Laptop hálózatának felderítése",
-            "5. TCP/IP ADB bekapcsolása USB-n",
-            "6. Wi-Fi ADB-kapcsolat létrehozása és shellteszt",
-            "7. USB-kábel nélkül a kapcsolat újbóli ellenőrzése",
+            "ADB és eszközlista frissítése",
+            "Telefonkapcsolat tesztelése",
+            "Telefon IP-címeinek felderítése",
+            "Laptop hálózatának felderítése",
+            "TCP/IP ADB bekapcsolása USB-n",
+            "Wi-Fi ADB-kapcsolódás és shellteszt",
+            "Ellenőrzés USB-kábel nélkül",
         ]
-        steps_columns = QHBoxLayout()
-        steps_columns.setContentsMargins(0, 0, 0, 0)
-        steps_columns.setSpacing(18)
-        self.step_labels = []
-        self._step_columns = [QVBoxLayout(), QVBoxLayout()]
-        for column in self._step_columns:
-            column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(1)
-            steps_columns.addLayout(column, 1)
-
-        # Három lépés a bal, négy a jobb oszlopban; a 7. lépés is
-        # a jobb oldalra kerül, hogy a két oszlop magassága kiegyensúlyozott legyen.
-        column_for_step = (0, 1, 0, 1, 0, 1, 1)
-        for index, step_text in enumerate(self.step_texts):
-            label = QLabel("○  " + step_text)
-            label.setWordWrap(True)
-            self._step_columns[column_for_step[index]].addWidget(label)
-            self.step_labels.append(label)
-        for column in self._step_columns:
-            column.addStretch(1)
-        steps_layout.addLayout(steps_columns)
-
-        # A soron következő művelet gombja zöld hátteret kap; kattintás/futás után visszaáll.
-        self._workflow_buttons = {}
-        self._normal_button_style = ""
-        self._active_button_style = (
-            "QPushButton { background-color: #2e8b57; color: white; font-weight: 600; }"
-            "QPushButton:disabled { background-color: #b8c9be; color: #f5f5f5; }"
-        )
-        self.step_status = QLabel(
-            "Kezdés: nyomd meg az 1. Eszközlista frissítése gombot. "
-            "Ezután kövesd a zölddel jelölt következő gombot."
-        )
+        button_texts = [
+            "1.  Eszközlista frissítése",
+            "2.  Kapcsolat tesztelése",
+            "3.  Telefon IP-címeinek felderítése",
+            "4.  Laptop hálózatának felderítése",
+            "5.  TCP/IP ADB bekapcsolása",
+            "6.  Wi-Fi ADB-kapcsolódás",
+            "7.  USB nélküli végső ellenőrzés",
+        ]
+        self.step_buttons: list[QPushButton] = []
+        self.step_status_labels: list[QLabel] = []
+        for index, (button_text, description) in enumerate(zip(button_texts, self.step_texts), start=1):
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            button = QPushButton(button_text)
+            button.setMinimumHeight(38)
+            button.setMinimumWidth(250)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.setToolTip(description)
+            self.step_buttons.append(button)
+            status = QLabel("○  Várakozik")
+            status.setMinimumWidth(220)
+            status.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            self.step_status_labels.append(status)
+            row.addWidget(button, 3)
+            row.addWidget(status, 2)
+            steps_layout.addLayout(row)
+        self.step_status = QLabel("Kezdés: nyomd meg az 1. Eszközlista frissítése gombot.")
         self.step_status.setWordWrap(True)
+        self._set_message_style(error=False)
         steps_layout.addWidget(self.step_status)
         root.addWidget(steps_group)
-        # A részletes sorrend a lépésjelzőben jelenik meg; külön hosszú magyarázó sor nincs.
 
-        status_group = QGroupBox("ADB-szerver")
-        status_row = QHBoxLayout(status_group)
-        self.status_label = QLabel("Ellenőrzés…")
-        self.refresh_button = QPushButton("1. Eszközlista frissítése")
-        self.refresh_button.clicked.connect(self.refresh_devices)
+        # A kapcsolódáshoz szükséges eszközválasztás és ellenőrzési eredmények.
+        device_group = QGroupBox("Felismert telefon és kapcsolat állapota")
+        device_layout = QVBoxLayout(device_group)
+        device_row = QHBoxLayout()
+        device_row.addWidget(QLabel("ADB-eszköz:"))
+        self.device_combo = QComboBox()
+        self.device_combo.setMinimumWidth(260)
+        device_row.addWidget(self.device_combo, 1)
+        self.status_label = QLabel("ADB ellenőrzése…")
+        self.status_label.setWordWrap(True)
+        self._set_status_label_style(error=False)
+        device_row.addWidget(self.status_label, 2)
+        device_layout.addLayout(device_row)
+        self.device_details_label = QLabel("A felismert eszköz részletei itt jelennek meg.")
+        self.device_details_label.setWordWrap(True)
+        self.device_details_label.setStyleSheet("color: palette(mid); padding: 3px;")
+        device_layout.addWidget(self.device_details_label)
+        root.addWidget(device_group)
+
+        # Telefon- és laptopoldali hálózati adatok.
+        network_group = QGroupBox("Hálózati adatok")
+        network_layout = QGridLayout(network_group)
+        network_layout.setHorizontalSpacing(12)
+        network_layout.setVerticalSpacing(6)
+        network_layout.addWidget(QLabel("Telefon IP-címei:"), 0, 0)
+        self.phone_network_label = QLabel("USB-s ADB-kapcsolat után kérdezhetők le.")
+        self.phone_network_label.setWordWrap(True)
+        network_layout.addWidget(self.phone_network_label, 0, 1)
+        network_layout.addWidget(QLabel("Laptop hálózata:"), 1, 0)
+        self.linux_network_label = QLabel("A laptop interfészei és útvonalai még nincsenek lekérdezve.")
+        self.linux_network_label.setWordWrap(True)
+        network_layout.addWidget(self.linux_network_label, 1, 1)
+        root.addWidget(network_group)
+
+        # Wi-Fi ADB beállításai: a meglévő mezők és automatikus címjavaslat megmaradnak.
+        wifi_group = QGroupBox("Wi-Fi ADB beállításai")
+        wifi_layout = QFormLayout(wifi_group)
+        ip_row = QHBoxLayout()
+        self.address_input = QLineEdit()
+        self.address_input.setPlaceholderText("Telefon IP-címe (pl. 192.168.1.25)")
+        self.port_input = QLineEdit(str(DEFAULT_PORT))
+        self.port_input.setMaximumWidth(100)
+        self.port_input.setToolTip("Alapértelmezett port: 5555")
+        ip_row.addWidget(self.address_input, 1)
+        ip_row.addWidget(QLabel("Port:"))
+        ip_row.addWidget(self.port_input)
+        wifi_layout.addRow("Célcím:", ip_row)
+        self.auto_discover_checkbox = QCheckBox("IP-címek felderítése USB-s ADB-kapcsolatból")
+        self.auto_discover_checkbox.setChecked(True)
+        wifi_layout.addRow("Automatizálás:", self.auto_discover_checkbox)
+        note = QLabel("Az IP-felderítéshez működő USB-s ADB kell. A port megadása önmagában nem kapcsolja be a TCP/IP ADB-t.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(mid);")
+        wifi_layout.addRow("Fontos:", note)
+        root.addWidget(wifi_group)
+
+        # Haladó gombok külön panelen, a kötelező sorrendet nem zavarva.
+        advanced_group = QGroupBox("Haladó ADB-műveletek  —  megnyitás / bezárás")
+        advanced_group.setCheckable(True)
+        advanced_group.setChecked(False)
+        advanced_layout = QVBoxLayout(advanced_group)
+        advanced_content = QWidget()
+        advanced_content_layout = QVBoxLayout(advanced_content)
+        advanced_content_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_buttons = QHBoxLayout()
         self.start_server_button = QPushButton("ADB indítása")
         self.start_server_button.clicked.connect(self.start_server)
         self.restart_server_button = QPushButton("ADB újraindítása")
         self.restart_server_button.clicked.connect(self.restart_server)
         self.kill_server_button = QPushButton("ADB leállítása")
         self.kill_server_button.clicked.connect(self.kill_server)
-        status_row.addWidget(self.status_label, 1)
-        status_row.addWidget(self.refresh_button)
-        status_row.addWidget(self.start_server_button)
-        status_row.addWidget(self.restart_server_button)
-        status_row.addWidget(self.kill_server_button)
-        root.addWidget(status_group)
-
-        device_group = QGroupBox("Észlelt ADB-eszközök")
-        device_layout = QVBoxLayout(device_group)
-        self.device_combo = QComboBox()
-        device_layout.addWidget(self.device_combo)
-        dev_buttons = QHBoxLayout()
-        self.test_button = QPushButton("2. Kapcsolat tesztelése")
-        self.test_button.clicked.connect(self.test_selected_device)
-        self.discover_button = QPushButton("3. Telefon IP-címeinek felderítése")
-        self.discover_button.clicked.connect(self.discover_selected_ips)
         self.disconnect_button = QPushButton("Wi-Fi-eszköz leválasztása")
         self.disconnect_button.clicked.connect(self.disconnect_selected_device)
-        dev_buttons.addWidget(self.test_button)
-        dev_buttons.addWidget(self.discover_button)
-        dev_buttons.addWidget(self.disconnect_button)
-        self.verify_wireless_button = QPushButton("7. USB nélkül: Wi-Fi-kapcsolat ellenőrzése")
-        self.verify_wireless_button.setToolTip("Előbb húzd ki az USB-kábelt, majd ezzel teszteld a Wi-Fi/TCP ADB-kapcsolatot.")
-        self.verify_wireless_button.clicked.connect(self.verify_wireless_connection)
-        device_layout.addLayout(dev_buttons)
-        device_layout.addWidget(self.verify_wireless_button)
-        root.addWidget(device_group)
-
-        wifi_group = QGroupBox("Wi-Fi ADB")
-        wifi_layout = QFormLayout(wifi_group)
-        ip_row = QHBoxLayout()
-        self.address_input = QLineEdit()
-        self.address_input.setPlaceholderText("Telefon IP-címe (pl. 10.224.12.162)")
-        self.port_input = QLineEdit(str(DEFAULT_PORT))
-        self.port_input.setMaximumWidth(90)
-        self.port_input.setToolTip("Alapértelmezett port: 5555")
-        ip_row.addWidget(self.address_input, 1)
-        ip_row.addWidget(QLabel("Port:"))
-        ip_row.addWidget(self.port_input)
-        self.connect_button = QPushButton("6. Wi-Fi ADB-kapcsolódás")
-        self.connect_button.clicked.connect(self.connect_wifi)
-        ip_row.addWidget(self.connect_button)
-        wifi_layout.addRow("IP-cím:", ip_row)
-
-        self.auto_discover_checkbox = QCheckBox("IP-címek felderítése USB-s ADB-kapcsolatból")
-        self.auto_discover_checkbox.setChecked(True)
-        wifi_layout.addRow("", self.auto_discover_checkbox)
-        self.enable_tcpip_button = QPushButton("5. USB-n: TCP/IP ADB bekapcsolása (5555)")
-        self.enable_tcpip_button.clicked.connect(self.enable_tcpip)
-        wifi_layout.addRow("", self.enable_tcpip_button)
-        note = QLabel("Az automatikus IP-felderítéshez USB-s ADB kell; a port önmagában nem engedélyezi a TCP/IP ADB-t.")
-        note.setWordWrap(True)
-        wifi_layout.addRow("", note)
-        root.addWidget(wifi_group)
-
-        linux_group = QGroupBox("Laptop hálózata")
-        linux_row = QHBoxLayout(linux_group)
-        self.linux_network_label = QLabel("A laptop hálózati adatainak lekérdezése.")
-        self.linux_network_label.setWordWrap(True)
-        self.linux_network_button = QPushButton("4. Laptop hálózatának felderítése")
-        self.linux_network_button.clicked.connect(self.inspect_linux_network)
-        linux_row.addWidget(self.linux_network_label, 1)
-        linux_row.addWidget(self.linux_network_button)
-        root.addWidget(linux_group)
+        self.manual_refresh_button = QPushButton("Eszközlista frissítése")
+        self.manual_refresh_button.clicked.connect(self.refresh_devices)
+        for button in (self.start_server_button, self.restart_server_button, self.kill_server_button,
+                       self.disconnect_button, self.manual_refresh_button):
+            advanced_buttons.addWidget(button)
+        advanced_content_layout.addLayout(advanced_buttons)
+        advanced_layout.addWidget(advanced_content)
+        advanced_content.setVisible(False)
+        root.addWidget(advanced_group)
+        advanced_group.toggled.connect(advanced_content.setVisible)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
+        self.progress.setTextVisible(False)
         root.addWidget(self.progress)
+        root.addStretch(1)
 
-        log_heading = QLabel("Kapcsolati napló")
+        # Részletes napló külön fülön.
+        log_heading = QLabel("Részletes ADB- és hálózati napló")
+        log_heading.setStyleSheet("font-size: 15px; font-weight: 600;")
         log_layout.addWidget(log_heading)
-
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1000)
+        self.log_view.setPlaceholderText("Az ADB-parancsok, eredmények és hibák itt jelennek meg.")
         log_layout.addWidget(self.log_view, 1)
-
         clear_button = QPushButton("Napló törlése")
         clear_button.clicked.connect(self.log_view.clear)
         log_layout.addWidget(clear_button)
 
-        self._workflow_buttons = {
-            1: [self.refresh_button],
-            2: [self.test_button],
-            3: [self.discover_button],
-            4: [self.linux_network_button],
-            5: [self.enable_tcpip_button],
-            6: [self.connect_button],
-            7: [self.verify_wireless_button],
-        }
-        self._highlight_workflow_button(1)
+        # A hét lépés gombjai az eredeti műveletekhez kapcsolódnak.
+        self.refresh_button = self.step_buttons[0]
+        self.test_button = self.step_buttons[1]
+        self.discover_button = self.step_buttons[2]
+        self.linux_network_button = self.step_buttons[3]
+        self.enable_tcpip_button = self.step_buttons[4]
+        self.connect_button = self.step_buttons[5]
+        self.verify_wireless_button = self.step_buttons[6]
+        self.refresh_button.clicked.connect(self.refresh_devices)
+        self.test_button.clicked.connect(self.test_selected_device)
+        self.discover_button.clicked.connect(self.discover_selected_ips)
+        self.linux_network_button.clicked.connect(self.inspect_linux_network)
+        self.enable_tcpip_button.clicked.connect(self.enable_tcpip)
+        self.connect_button.clicked.connect(self.connect_wifi)
+        self.verify_wireless_button.clicked.connect(self.verify_wireless_connection)
         self.device_combo.currentIndexChanged.connect(self._update_buttons)
+        self._render_steps()
         self._update_buttons()
 
+    def _set_message_style(self, error: bool):
+        """Make workflow feedback visually unmistakable when an error is active."""
+        if error:
+            self.step_status.setStyleSheet(
+                "QLabel { color: #FF6B6B; background: #2A1719; "
+                "border: 2px solid #E53935; border-radius: 6px; "
+                "padding: 7px; font-weight: 600; }"
+            )
+        else:
+            self.step_status.setStyleSheet(
+                "QLabel { color: palette(text); background: palette(alternate-base); "
+                "border: 1px solid palette(mid); border-radius: 6px; padding: 7px; }"
+            )
+
+    def _set_status_label_style(self, error: bool):
+        """Red while no authorized online ADB device exists; normal otherwise."""
+        if error:
+            self.status_label.setStyleSheet(
+                "QLabel { color: #FF6B6B; font-weight: 700; padding: 3px; "
+                "border: 1px solid #E53935; border-radius: 4px; }"
+            )
+        else:
+            self.status_label.setStyleSheet("QLabel { color: palette(text); padding: 3px; }")
+
+    def _set_status_error(self, status_text: str, message: str):
+        self.status_label.setText(status_text)
+        self._set_status_label_style(error=True)
+        self.step_status.setText(message)
+        self._set_message_style(error=True)
+
+    def _set_status_normal(self, status_text: str):
+        self.status_label.setText(status_text)
+        self._set_status_label_style(error=False)
+        self._set_message_style(error=False)
+
     def _highlight_workflow_button(self, current: int):
-        for buttons in self._workflow_buttons.values():
-            for button in buttons:
-                button.setStyleSheet(self._normal_button_style)
-        for button in self._workflow_buttons.get(current, []):
-            button.setStyleSheet(self._active_button_style)
+        self.current_step = current
+        for index, button in enumerate(self.step_buttons, start=1):
+            if index in self.completed_steps:
+                button.setStyleSheet(
+                    "QPushButton { background-color: #E7F5EC; color: #176B39; "
+                    "border: 1px solid #82C99A; border-radius: 5px; padding: 7px; }"
+                )
+            elif index == current:
+                button.setStyleSheet(
+                    "QPushButton { background-color: #23854B; color: white; "
+                    "font-weight: 700; border: 1px solid #176B39; border-radius: 5px; padding: 7px; }"
+                    "QPushButton:disabled { background-color: #9CBDA8; color: white; }"
+                )
+            else:
+                button.setStyleSheet("")
+
+    def _render_steps(self):
+        for index, label in enumerate(self.step_status_labels, start=1):
+            if index in self.completed_steps:
+                label.setText("✓  Sikeresen ellenőrizve")
+                label.setStyleSheet("color: #219653; font-weight: 600; padding-left: 4px;")
+            elif index == self.current_step:
+                label.setText("▶  Következik / folyamatban")
+                label.setStyleSheet("color: #23854B; font-weight: 700; padding-left: 4px;")
+            else:
+                label.setText("○  Várakozik")
+                label.setStyleSheet("color: palette(mid); padding-left: 4px;")
+        count = len(self.completed_steps)
+        self.overall_status.setText(f"{count} / 7 lépés kész")
+        if count == 7:
+            self.overall_status.setText("✓  Kapcsolat kész")
+            self.overall_status.setStyleSheet(
+                "QLabel { padding: 8px 12px; border: 1px solid #219653; "
+                "border-radius: 7px; color: #219653; font-weight: 700; }"
+            )
+        else:
+            self.overall_status.setStyleSheet(
+                "QLabel { padding: 8px 12px; border: 1px solid #7A8795; "
+                "border-radius: 7px; font-weight: 600; }"
+            )
+        self._highlight_workflow_button(self.current_step)
 
     def _set_step(self, current: int, completed: tuple[int, ...] = (), message: str = ""):
-        """Update the visible numbered workflow; indices are 1-based."""
-        self._highlight_workflow_button(current)
-        for index, label in enumerate(self.step_labels, start=1):
-            if index in completed:
-                marker = "✓"
-                label.setStyleSheet("color: #2e8b57; font-weight: 600;")
-            elif index == current:
-                marker = "▶"
-                label.setStyleSheet("font-weight: 700;")
-            else:
-                marker = "○"
-                label.setStyleSheet("color: palette(mid);")
-            label.setText(f"{marker}  {self.step_texts[index - 1]}")
+        """Update the seven-step workflow; completed steps are 1-based."""
+        self.current_step = current
+        self.completed_steps.update(completed)
+        self._render_steps()
         if message:
             self.step_status.setText(message)
+            self._set_message_style(error=False)
 
     def _log(self, message: str):
         self.log_view.appendPlainText(message)
@@ -518,10 +626,10 @@ class ConnectionsWidget(QWidget):
     def _set_busy(self, busy: bool, status: str = ""):
         self.progress.setVisible(busy)
         for widget in (
-            self.refresh_button, self.start_server_button, self.restart_server_button,
-            self.kill_server_button, self.connect_button, self.device_combo,
-            self.discover_button, self.enable_tcpip_button, self.linux_network_button,
-            self.verify_wireless_button,
+            *self.step_buttons, self.start_server_button, self.restart_server_button,
+            self.kill_server_button, self.disconnect_button, self.manual_refresh_button,
+            self.device_combo, self.address_input, self.port_input,
+            self.auto_discover_checkbox,
         ):
             widget.setEnabled(not busy)
         self._update_buttons()
@@ -531,12 +639,24 @@ class ConnectionsWidget(QWidget):
     def _update_buttons(self, *_):
         busy = self._is_busy()
         device = self._selected_device()
-        self.test_button.setEnabled(not busy and device is not None)
-        self.discover_button.setEnabled(not busy and device is not None)
+        self.test_button.setEnabled(not busy and device is not None and device.state == "device")
+        self.discover_button.setEnabled(not busy and device is not None and device.state == "device")
+        self.enable_tcpip_button.setEnabled(
+            not busy and device is not None and device.connection_type == "USB / helyi" and device.state == "device"
+        )
+        self.connect_button.setEnabled(not busy)
+        self.linux_network_button.setEnabled(not busy)
+        self.verify_wireless_button.setEnabled(not busy)
         self.disconnect_button.setEnabled(
             not busy and device is not None and device.connection_type == "Wi-Fi / TCP"
         )
-        self.verify_wireless_button.setEnabled(not busy)
+        if device is None:
+            self.device_details_label.setText("Nem található kiválasztott ADB-eszköz. Ellenőrizd az USB-kábelt és az USB-hibakeresést.")
+        else:
+            self.device_details_label.setText(
+                f"Eszközazonosító: {device.serial}   |   Állapot: {device.state}   |   Kapcsolat: {device.connection_type}"
+                + (f"   |   Részletek: {device.details}" if device.details else "")
+            )
 
     def _start_task(self, label: str, function: Callable, args=(), on_success=None):
         if self._task is not None:
@@ -556,14 +676,25 @@ class ConnectionsWidget(QWidget):
         task.finished.connect(self._task_finished)
         self._set_busy(True, f"Folyamatban: {label}")
         low_label = label.lower()
-        if "felderít" in low_label or "hálózat" in low_label or "ip-cím" in low_label:
-            self._set_step(3, (1, 2), f"3/5 – {label}. A program a telefon és a laptop hálózati címeit vizsgálja.")
+        # Futás közben csak az aktuális lépést jelöljük; a pipákat kizárólag
+        # a sikeres visszatéréskor állítjuk be.
+        if "usb nélküli wi-fi adb ellenőrzése" in low_label:
+            current = 7
         elif "wifi adb kapcsolódás" in low_label or "wifi adb csatlakozás" in low_label:
-            self._set_step(4, (1, 2, 3), f"4/5 – {label}. A kapcsolódás után shellteszt következik.")
-        elif "shell-kapcsolat" in low_label:
-            self._set_step(2, (1,), f"2/5 – {label}. A telefon válaszát ellenőrizzük.")
-        elif "eszközlista" in low_label or "adb szerver" in low_label:
-            self._set_step(1, (), f"1/5 – {label}. ADB-szerver és eszközlista ellenőrzése.")
+            current = 6
+        elif "tcp/ip adb engedélyezése" in low_label or "tcp/ip adb bekapcsolása" in low_label:
+            current = 5
+        elif "laptop hálózati adatainak felderítése" in low_label or "hálózati adatok lekérdezése" in low_label:
+            current = 4
+        elif "telefon ip-címeinek felderítése" in low_label or "ip-felderítés" in low_label:
+            current = 3
+        elif "shell-kapcsolat tesztelése" in low_label:
+            current = 2
+        elif "eszközlista" in low_label or "adb szerver, verzió" in low_label:
+            current = 1
+        else:
+            current = self.current_step
+        self._set_step(current, (), f"{current}/7 – Folyamatban: {label}")
         task.start()
 
     def _task_succeeded(self, result):
@@ -582,45 +713,86 @@ class ConnectionsWidget(QWidget):
             self._pending_success(result)
         task_label = self._task.label.lower() if self._task else ""
         if "usb nélküli wi-fi adb ellenőrzése" in task_label:
-            # _wireless_check_succeeded marks the final step.
+            # Only _wireless_check_succeeded may mark the final step complete.
             pass
-        elif "wifi adb kapcsolódás" in task_label or "wifi adb csatlakozás" in task_label:
+        elif "adb szerver, verzió és eszközlista" in task_label or "eszközlista" in task_label:
+            # A successful adb command is NOT proof that a phone is connected.
+            # Require at least one authorized, online device before completing step 1.
+            devices = result.get("devices", []) if isinstance(result, dict) else []
+            online_devices = [device for device in devices if device.state == "device"]
+            if not online_devices:
+                # Clear stale progress: a previously connected phone may have been unplugged.
+                self.completed_steps.clear()
+                self.current_step = 1
+                self._render_steps()
+                self._set_status_error(
+                    "Nincs engedélyezett ADB-eszköz.",
+                    "Az ADB működik, de nincs csatlakoztatott és engedélyezett telefon. "
+                    "Csatlakoztasd USB-n, oldd fel a telefont, engedélyezd az USB-hibakeresést, "
+                    "fogadd el az RSA-engedélykérést, majd frissítsd az eszközlistát."
+                )
+                self._log("[ELLENŐRZÉS SIKERTELEN] Nincs online, engedélyezett ADB-eszköz; az 1. lépés nem kap pipát.")
+                return
             self._set_step(
-                7, (1, 2, 3, 4, 5, 6),
-                "6/7 kész – A Wi-Fi ADB-kapcsolat és a shellteszt sikerült. "
-                "Most húzd ki az USB-kábelt, majd nyomd meg a zöld 7. ellenőrző gombot."
+                2, (1,),
+                "1/7 kész – Az ADB-eszközlista legalább egy engedélyezett, online eszközt tartalmaz. "
+                "Következik a telefonkapcsolat tényleges tesztelése."
+            )
+        elif "wifi adb kapcsolódás" in task_label or "wifi adb csatlakozás" in task_label:
+            # The connect worker already confirms that this exact TCP device is online
+            # and answers a real shell command. Do not auto-complete earlier steps.
+            self._set_step(
+                7, (6,),
+                "6. lépés sikeres – A Wi-Fi ADB-kapcsolat és a shellteszt működik. "
+                "Húzd ki az USB-kábelt, majd végezd el a 7. ellenőrzést."
             )
         elif "tcp/ip adb engedélyezése" in task_label or "tcp/ip adb bekapcsolása" in task_label:
             self._set_step(
-                6, (1, 2, 3, 4, 5),
-                "5/7 kész – A TCP/IP ADB engedélyezve van. Következik a 6. Wi-Fi ADB-kapcsolódás."
+                6, (5,),
+                "Az 5. lépés parancsa sikeresen lefutott. Következik a Wi-Fi ADB-kapcsolódás; "
+                "a tényleges elérhetőséget a 6. lépés ellenőrzi."
             )
         elif "telefon ip-címeinek felderítése" in task_label or "ip-felderítés" in task_label:
+            addresses = result if isinstance(result, list) else []
+            if not addresses:
+                self._set_status_error(
+                    "Nem találtam használható telefon-IP-címet.",
+                    "A 3. lépés nem sikerült: a telefon nem adott vissza használható IPv4-címet. "
+                    "Ez a lépés nem kap pipát. Ellenőrizd a telefon ADB-kapcsolatát és a hálózatot."
+                )
+                self._log("[ELLENŐRZÉS SIKERTELEN] Nincs használható telefon-IP-cím; a 3. lépés nem kap pipát.")
+                return
             self._set_step(
-                4, (1, 2, 3),
-                "3/7 kész – A telefon IP-címeit megtaláltuk. Következik a 4. laptop-hálózatfelderítés."
+                4, (3,),
+                "3. lépés sikeres – A telefon legalább egy használható IPv4-címét megtaláltuk. "
+                "Következik a laptop hálózatának felderítése."
             )
         elif "laptop hálózati adatainak felderítése" in task_label or "hálózati adatok lekérdezése" in task_label:
+            summary, logs = result if isinstance(result, tuple) and len(result) == 2 else ("", [])
+            if not logs or "nem található" in summary.lower() or "hiba" in summary.lower():
+                self._set_status_error(
+                    "A laptop hálózati adatai nem ellenőrizhetők.",
+                    "A 4. lépés nem igazolható: a hálózati lekérdezés nem adott használható adatokat."
+                )
+                return
             self._set_step(
-                5, (1, 2, 3, 4),
-                "4/7 kész – A laptop hálózati adatai megvannak. Következik az 5. TCP/IP ADB-lépés USB-n."
+                5, (4,),
+                "4. lépés sikeres – A laptop hálózati adatait lekérdeztük. Következik az 5. TCP/IP ADB-lépés USB-n."
             )
         elif "shell-kapcsolat tesztelése" in task_label:
             self._set_step(
-                3, (1, 2),
-                "2/7 kész – A telefon válaszol. Következik a 3. telefon-IP-felderítés."
+                3, (2,),
+                "2. lépés sikeres – A telefon valódi ADB shell-parancsra válaszolt. Következik a telefon IP-felderítése."
             )
-        elif "eszközlista" in task_label:
-            self._set_step(
-                2, (1,),
-                "1/7 kész – Az ADB és az eszközlista rendben. Következik a 2. kapcsolatellenőrzés."
-            )
-        self.status_label.setText("A művelet sikeres.")
+        # Step 1 is handled above with an explicit online-device check.
+        self._set_status_normal("A művelet sikeres.")
 
     def _task_failed(self, error: str):
         self._log(f"[HIBA] {error}")
-        self.status_label.setText("Hiba történt – a kapcsolat nincs igazolva.")
-        self.step_status.setText("A lépés nem sikerült. Az előző lépések állapota megmarad; javítsd a hibát, majd próbáld újra.")
+        self._set_status_error(
+            "Hiba történt – a kapcsolat nincs igazolva.",
+            "A lépés nem sikerült. Az előző lépések állapota megmarad; javítsd a hibát, majd próbáld újra."
+        )
         QMessageBox.warning(self, "ADB-művelet sikertelen", error)
 
     def _task_finished(self):
@@ -668,6 +840,16 @@ class ConnectionsWidget(QWidget):
             if index >= 0:
                 self.device_combo.setCurrentIndex(index)
         self.device_combo.blockSignals(False)
+        online_devices = [device for device in devices if device.state == "device"]
+        if online_devices:
+            self._set_status_normal(f"Engedélyezett ADB-eszköz: {len(online_devices)}")
+        else:
+            self._set_status_error(
+                "Nincs engedélyezett ADB-eszköz.",
+                "Az ADB nem talált engedélyezett, online telefont. Csatlakoztasd a készüléket, "
+                "old fel a képernyőt, engedélyezd az USB-hibakeresést és fogadd el az RSA-kérést, "
+                "majd frissítsd az eszközlistát."
+            )
         self._update_buttons()
 
     def _selected_serial(self) -> str:
@@ -720,8 +902,9 @@ class ConnectionsWidget(QWidget):
         )
 
     def _wireless_check_succeeded(self, serial: str, result: Any):
-        self._set_step(5, (1, 2, 3, 4, 5),
-                       f"5/5 kész – A Wi-Fi ADB-kapcsolat működik USB-kábel nélkül: {serial}")
+        # This test proves step 7 only; it must not silently tick earlier steps.
+        self._set_step(7, (7,),
+                       f"A 7. lépés sikeres – A Wi-Fi ADB-kapcsolat USB-kábel nélkül működik: {serial}")
         QMessageBox.information(
             self, "Wi-Fi ADB – sikeres",
             f"A vezeték nélküli ADB-kapcsolat működik.\n\nEszköz: {serial}\nEredmény: {result}"
@@ -744,6 +927,7 @@ class ConnectionsWidget(QWidget):
 
     def _show_phone_addresses(self, addresses: list[NetworkAddress]):
         if not addresses:
+            self.phone_network_label.setText("Nem található használható IPv4-cím.")
             self._log("A telefonon nem sikerült külső IPv4-címet találni.")
             QMessageBox.information(
                 self, "IP-felderítés",
@@ -753,6 +937,9 @@ class ConnectionsWidget(QWidget):
         self._log("Telefon IPv4-címei:")
         for address in addresses:
             self._log(f"  {address.interface}: {address.address}/{address.prefix}")
+        self.phone_network_label.setText(";  ".join(
+            f"{address.interface}: {address.address}/{address.prefix}" for address in addresses
+        ))
         self._suggest_addresses(addresses)
 
     def _suggest_addresses(self, addresses: list[NetworkAddress]):

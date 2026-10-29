@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """ACC – Android Control Center: rendszerfüggőség-ellenőrző Debian/Ubuntu-alapú rendszerekhez."""
 from __future__ import annotations
-import importlib.util, json, os, shlex, shutil, subprocess, sys
+import importlib.util, json, os, shlex, shutil, subprocess, sys, tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from PyQt6.QtCore import Qt
@@ -84,11 +84,14 @@ class PreferencesDialog(QDialog):
         buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
     def terminal(self) -> str: return self.terminal_combo.currentText().strip()
 
-class DependencyChecker(QMainWindow):
-    def __init__(self):
-        super().__init__(); self.settings = load_settings()
-        self.setWindowTitle("ACC – Rendszerfüggőségek ellenőrzése"); self.resize(1000, 600)
-        central = QWidget(); root = QVBoxLayout(central)
+class DependencyCheckerWidget(QWidget):
+    """Beágyazható függőségkezelő-panel az ACC főablakához."""
+    def __init__(self, parent=None, settings: dict | None = None):
+        super().__init__(parent)
+        self.settings = load_settings()
+        if settings:
+            self.settings.update(settings)
+        root = QVBoxLayout(self)
         intro = QLabel("Ellenőrzi az ACC által használt rendszerprogramokat és Python-könyvtárakat. A telepítés és frissítés Debian/Ubuntu/AV Linux rendszereken az apt-get csomagkezelővel történik.")
         intro.setWordWrap(True); root.addWidget(intro)
         self.table = QTableWidget(0, 4); self.table.setHorizontalHeaderLabels(["Összetevő", "Állapot", "Típus", "Mire való?"])
@@ -101,7 +104,7 @@ class DependencyChecker(QMainWindow):
         prefs = QPushButton("⚙ Beállítások"); prefs.setToolTip("Alapértelmezett terminál kiválasztása"); prefs.clicked.connect(self.open_preferences); buttons.addWidget(prefs)
         self.update_button = QPushButton("Csomagok frissítése…"); self.update_button.setStyleSheet("QPushButton { background:#1769aa; color:white; font-weight:bold; padding:8px; }"); self.update_button.clicked.connect(self.update_packages); buttons.addWidget(self.update_button)
         self.install_button = QPushButton("Hiányzó csomagok telepítése…"); self.install_button.setStyleSheet("QPushButton { background:#247bce; color:white; font-weight:bold; padding:8px; }"); self.install_button.clicked.connect(self.install_missing); buttons.addWidget(self.install_button)
-        root.addLayout(buttons); self.setCentralWidget(central); self.refresh()
+        root.addLayout(buttons); self.refresh()
 
     def open_preferences(self):
         dlg = PreferencesDialog(self.settings.get("terminal", detect_terminal()), self)
@@ -129,19 +132,69 @@ class DependencyChecker(QMainWindow):
         if not apt_ok:
             self.install_button.setToolTip("Az apt-get nem található."); self.update_button.setToolTip("Az apt-get nem található.")
 
-    def terminal_command(self, shell_command: str) -> list[str] | None:
+    def terminal_command(self, script_path: str) -> list[str] | None:
+        """A terminál egy külön Bash-fájlt indítson, ne összetett parancssort.
+
+        Az x-terminal-emulator gyakran xfce4-terminalra mutat. Az XFCE
+        --command/-e argumentumkezelése nem azonos az xtermével, ezért a
+        shellparancsot nem adjuk át több, terminálfüggően értelmezett argv-ként.
+        A terminál csak a `bash` és a fájl elérési útját kapja.
+        """
         parts = shlex.split(self.settings.get("terminal", detect_terminal()))
-        if not parts or not shutil.which(parts[0]): return None
-        name = os.path.basename(parts[0]); option = TERMINALS.get(name, ["-e"])
-        return parts + option + ["bash", "-lc", shell_command]
+        if not parts:
+            return None
+        executable = shutil.which(parts[0])
+        if not executable:
+            return None
+
+        configured_name = os.path.basename(parts[0])
+        resolved_name = os.path.basename(os.path.realpath(executable))
+        names = {configured_name, resolved_name}
+        bash_args = ["bash", script_path]
+
+        if "xfce4-terminal" in names:
+            # Az XFCE --command egyetlen parancsszöveget vár.
+            return parts + ["--disable-server", "--command", shlex.join(bash_args)]
+        if names & {"mate-terminal", "gnome-terminal"}:
+            return parts + ["--", *bash_args]
+        if "tilix" in names:
+            return parts + ["--command", shlex.join(bash_args)]
+        # xterm, konsole, lxterminal, kitty és x-terminal-emulator egyéb céljai.
+        return parts + ["-e", *bash_args]
 
     def run_in_terminal(self, shell_command: str, title: str) -> None:
-        cmd = self.terminal_command(shell_command)
+        # A shell tartalmát fájlba írjuk, így a terminál nem tudja félreértelmezni
+        # a sudo/apt argumentumokat vagy az idézőjeleket.
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", prefix="acc-dependencies-", suffix=".sh",
+                delete=False,
+            ) as handle:
+                script_path = handle.name
+                handle.write("#!/usr/bin/env bash\n")
+                handle.write(shell_command.rstrip() + "\n")
+                handle.write('\nrm -f -- "$0"\n')
+            os.chmod(script_path, 0o700)
+        except OSError as exc:
+            QMessageBox.critical(self, "Script létrehozási hiba", f"Az ideiglenes Bash-script nem hozható létre:\n{exc}")
+            return
+
+        cmd = self.terminal_command(script_path)
         if cmd is None:
-            QMessageBox.warning(self, "Terminál nem található", f"A beállított terminál nem indítható: {self.settings.get('terminal')}\n\nNyisd meg a Beállításokat, és válassz egy telepített terminált."); return
-        try: subprocess.Popen(cmd, start_new_session=True)
-        except OSError as exc: QMessageBox.critical(self, "Terminálindítási hiba", f"A terminál nem indítható:\n{exc}"); return
-        self.statusBar().showMessage(title + " külön terminálban elindult.", 6000)
+            try: os.unlink(script_path)
+            except OSError: pass
+            QMessageBox.warning(self, "Terminál nem található", f"A beállított terminál nem indítható: {self.settings.get('terminal')}\n\nNyisd meg a Beállításokat, és válassz egy telepített terminált.")
+            return
+        try:
+            subprocess.Popen(cmd, start_new_session=True)
+        except OSError as exc:
+            try: os.unlink(script_path)
+            except OSError: pass
+            QMessageBox.critical(self, "Terminálindítási hiba", f"A terminál nem indítható:\n{exc}")
+            return
+        host = self.window()
+        if hasattr(host, "statusBar"):
+            host.statusBar().showMessage(title + " külön terminálban elindult.", 6000)
 
     def scrcpy_installer_path(self) -> Path | None:
         """Megkeresi a resources könyvtárban lévő scrcpy telepítőscriptet."""
@@ -201,8 +254,22 @@ class DependencyChecker(QMainWindow):
         self.run_in_terminal(script, "Az ACC-csomagok frissítése")
 
 
-def main():
-    app = QApplication(sys.argv); app.setApplicationName("Android Control Center")
-    window = DependencyChecker(); window.show(); sys.exit(app.exec())
+class DependencyChecker(QMainWindow):
+    """Önálló ablak a modul külön indításához; a főprogram a Widgetet ágyazza be."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Android Control Center — Rendszerfüggőségek")
+        self.resize(1000, 600)
+        self.panel = DependencyCheckerWidget(self)
+        self.setCentralWidget(self.panel)
 
-if __name__ == "__main__": main()
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Android Control Center")
+    window = DependencyChecker()
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
