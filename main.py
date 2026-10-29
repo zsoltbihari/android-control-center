@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Redmi Control Center — főablak
+Android Control Center — főablak
 Követelmény: Python 3.10+ és PyQt6.
 Indítás: python3 main.py
 
-Ez az első, önállóan futtatható váz. A menü és a fő kezelőfelület működik;
-a külön modulokhoz tartozó műveletek egyelőre jelzik, ha az adott modul még
-nincs implementálva. A scrcpy indítás/leállítás külön vezérlőosztályba kerül
-a projekt következő lépésében.
+A főablak menükkel, témákkal, beállításokkal és modulbetöltéssel.
+A telefonos funkciókat a modules/ könyvtár külön moduljai valósítják meg.
 """
 
 from __future__ import annotations
@@ -21,8 +19,13 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import Qt, QProcess
-from PyQt6.QtGui import QAction, QFont, QPixmap
+# A projekt gyökere és a resources könyvtár elérhetővé tétele.
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from PyQt6.QtCore import Qt, QProcess, QThread, pyqtSignal
+from PyQt6.QtGui import QAction, QFont, QPixmap, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -40,22 +43,34 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QStackedWidget,
+    QStackedLayout,
 )
 
+from theme_manager import available_themes, theme_stylesheet
+from preferences import PreferencesDialog, load_preferences, save_preferences
 
-APP_NAME = "Redmi Control Center"
+
+APP_NAME = "Android Control Center"
 
 CONFIG_DIR = Path.home() / ".config" / "redmi-control-center"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
-PRESETS = [
-    "Alapértelmezett",
-    "Matrix",
-    "Zombie",
-    "Vampire",
-    "Barbie",
-    "Pink pussycat",
-]
+APP_IMAGE_NAMES = (
+    "scrcpy.png",
+    "android-control-center.png",
+)
+
+def find_app_image() -> Path:
+    """A névjegy képét több megszokott helyen keresi, a main.py helyéhez viszonyítva."""
+    base_dir = Path(__file__).resolve().parent
+    candidates = tuple(
+        path
+        for name in APP_IMAGE_NAMES
+        for path in (base_dir / name, base_dir / "assets" / name)
+    )
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+PRESETS = list(available_themes().keys())
 
 THEMES = {
     "Alapértelmezett": """
@@ -137,7 +152,7 @@ def load_settings() -> dict:
                 defaults.update(data)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Beállítások betöltési hibája: {exc}", file=sys.stderr)
-    if defaults.get("theme") not in THEMES:
+    if defaults.get("theme") not in available_themes():
         defaults["theme"] = "Alapértelmezett"
     return defaults
 
@@ -152,91 +167,65 @@ def save_settings(settings: dict) -> None:
     temp_file.replace(SETTINGS_FILE)
 
 
-class PreferencesDialog(QDialog):
-    def __init__(self, settings: dict, parent=None):
+
+class CallableWorker(QThread):
+    """Általános háttérszál lassabb modulműveletekhez."""
+    result_ready = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, function: Callable, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Beállítások")
-        self.setMinimumWidth(440)
-        self.settings = dict(settings)
+        self.function = function
 
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(PRESETS)
-        self.theme_combo.setCurrentText(self.settings.get("theme", "Alapértelmezett"))
-        form.addRow("Témasablon:", self.theme_combo)
-
-        self.scrcpy_path = __import__("PyQt6.QtWidgets", fromlist=["QLineEdit"]).QLineEdit(
-            self.settings.get("scrcpy_path", "scrcpy")
-        )
-        form.addRow("scrcpy parancs:", self.scrcpy_path)
-
-        self.adb_path = __import__("PyQt6.QtWidgets", fromlist=["QLineEdit"]).QLineEdit(
-            self.settings.get("adb_path", "adb")
-        )
-        form.addRow("ADB parancs:", self.adb_path)
-
-        self.width_spin = QSpinBox()
-        self.width_spin.setRange(800, 3840)
-        self.width_spin.setSuffix(" px")
-        self.width_spin.setValue(int(self.settings.get("window_width", 1100)))
-        form.addRow("Ablak szélessége:", self.width_spin)
-
-        self.height_spin = QSpinBox()
-        self.height_spin.setRange(500, 2160)
-        self.height_spin.setSuffix(" px")
-        self.height_spin.setValue(int(self.settings.get("window_height", 720)))
-        form.addRow("Ablak magassága:", self.height_spin)
-
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def get_settings(self) -> dict:
-        result = dict(self.settings)
-        result.update({
-            "theme": self.theme_combo.currentText(),
-            "scrcpy_path": self.scrcpy_path.text().strip() or "scrcpy",
-            "adb_path": self.adb_path.text().strip() or "adb",
-            "window_width": self.width_spin.value(),
-            "window_height": self.height_spin.value(),
-        })
-        return result
+    def run(self):
+        try:
+            self.result_ready.emit(self.function())
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
 class MainWindow(QMainWindow):
     MODULES = {
-        "Kapcsolatok": ("modules.connections", "Kapcsolatok"),
-        "Telefonkönyv": ("modules.contacts", "Telefonkönyv"),
-        "Eszközadatok": ("modules.device_info", "Eszközadatok"),
-        "Fájlkezelő": ("modules.file_manager", "Fájlkezelő"),
-        "Tárhely": ("modules.storage", "Tárhely"),
-        "Alkalmazások": ("modules.applications", "Alkalmazások"),
-        "Hálózat": ("modules.network", "Hálózat"),
-        "Diagnosztika": ("modules.diagnostics", "Diagnosztika"),
-        "Hálózati diagnosztika": ("modules.diagnostics", "Hálózati diagnosztika"),
-        "FRP-diagnosztika és lekérdezések": ("modules.google_accounts", "FRP-diagnosztika és lekérdezések"),
-        "Képernyőtükrözés": ("modules.screen_mirroring", "Képernyőtükrözés"),
+        "Kapcsolatok": "modules.connections",
+        "Telefonkönyv": "modules.contacts",
+        "Eszközadatok": "modules.device_info",
+        "Fájlkezelő": "modules.file_manager",
+        "Tárhely": "modules.storage",
+        "Alkalmazások": "modules.applications",
+        "Hálózati diagnosztika": "modules.diagnostics",
+        "FRP-diagnosztika és lekérdezések": "modules.google_accounts",
+        "Képernyőtükrözés": "modules.screen_mirroring",
+        "Virtuális kijelző és alkalmazások": "modules.virtual_screens",
+        "Rendszerfüggőségek": "modules.dependencies",
     }
 
     def __init__(self):
         super().__init__()
         self.settings = load_settings()
+        self.preferences = load_preferences()
+        # A külön preferences.json az általános ablakbeállítások elsődleges helye.
+        self.settings["window_width"] = int(self.preferences.get("window_width", self.settings.get("window_width", 1100)))
+        self.settings["window_height"] = int(self.preferences.get("window_height", self.settings.get("window_height", 720)))
+        # A háttérműveletek nyilvántartása; a closeEvent ezt ellenőrzi.
+        self._workers: set[CallableWorker] = set()
         self.scrcpy_process: QProcess | None = None
         self.setWindowTitle(APP_NAME)
+        icon_path = find_app_image()
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(
             int(self.settings.get("window_width", 1100)),
             int(self.settings.get("window_height", 720)),
         )
+        if self.preferences.get("remember_window_geometry", True):
+            x, y = self.preferences.get("window_x"), self.preferences.get("window_y")
+            if isinstance(x, int) and isinstance(y, int):
+                self.move(x, y)
+        self._dependency_window = None
         self._build_menu()
         self._build_ui()
         self.apply_theme(self.settings.get("theme", "Alapértelmezett"))
-        self.statusBar().showMessage("Készen áll. A modulok külön fejleszthetők.")
+        self.statusBar().showMessage("Készen áll. Válassz modult a menüből.")
 
     def _build_menu(self):
         # Egyetlen felső sáv: a menüsor balra, a témaválasztó jobbra igazítva.
@@ -276,8 +265,10 @@ class MainWindow(QMainWindow):
         extended_action = QAction("Kiterjesztett", self)
         extended_action.triggered.connect(self.start_extended)
         screen_menu.addAction(extended_action)
-        virtual_action = QAction("Virtuális kijelző", self)
-        virtual_action.triggered.connect(self.start_virtual_display)
+        virtual_action = QAction("Virtuális kijelző és alkalmazások", self)
+        virtual_action.triggered.connect(
+            lambda checked=False: self.open_module("Virtuális kijelző és alkalmazások")
+        )
         screen_menu.addAction(virtual_action)
         stop_action = QAction("scrcpy leállítása", self)
         stop_action.triggered.connect(self.stop_scrcpy)
@@ -296,7 +287,7 @@ class MainWindow(QMainWindow):
         )
         tools_menu.addAction(file_manager_window_action)
         tools_menu.addSeparator()
-        self._add_module_action(tools_menu, "Hálózat")
+        self._add_module_action(tools_menu, "Rendszerfüggőségek")
 
         help_menu = bar.addMenu("Súgó")
         about_action = QAction("Névjegy", self)
@@ -310,7 +301,7 @@ class MainWindow(QMainWindow):
         theme_label = QLabel("Témasablon:", theme_widget)
         theme_layout.addWidget(theme_label)
         self.preset_combo = QComboBox(theme_widget)
-        self.preset_combo.addItems(PRESETS)
+        self.preset_combo.addItems(list(available_themes().keys()))
         self.preset_combo.setCurrentText(self.settings.get("theme", "Alapértelmezett"))
         self.preset_combo.currentTextChanged.connect(self.on_preset_changed)
         self.preset_combo.setMinimumWidth(150)
@@ -337,29 +328,37 @@ class MainWindow(QMainWindow):
 
         # A kezdőlap és a modulok ugyanabban a munkaterületben váltanak nézetet.
         self.views = QStackedWidget(self.workspace)
+        # A QStackedWidget nem rendelkezik setSizeAdjustPolicy() metódussal.
+        # A nézet méretét a szülő layout kezeli; a főablak méretét nem állítjuk át itt.
+        self.views.setMinimumSize(0, 0)
         workspace_layout.addWidget(self.views)
 
-        self.home_page = QWidget()
-        home_layout = QVBoxLayout(self.home_page)
-        home_layout.setContentsMargins(24, 24, 24, 24)
-        home_layout.addStretch(1)
-        heading = QLabel("Redmi Control Center")
-        heading.setFont(QFont("", 20, QFont.Weight.DemiBold))
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        home_layout.addWidget(heading)
-        description = QLabel(
-            "Válassz funkciót a felső menüsorból.\n"
-            "A modulok ezen a munkaterületen jelennek meg."
-        )
-        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        description.setWordWrap(True)
-        home_layout.addWidget(description)
-
-        # A képernyőfunkciók elérhetők a Képernyő menüből, nem duplikáljuk őket gombokkal.
-        screen_hint = QLabel("Képernyőtükrözés és megjelenítési módok: Képernyő menü")
-        screen_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        home_layout.addWidget(screen_hint)
-        home_layout.addStretch(1)
+        try:
+            from resources.startscreen import StartScreen
+            self.home_page = StartScreen(
+                parent=self,
+                settings=self.settings,
+                open_dependencies=lambda: self.open_module("Rendszerfüggőségek"),
+            )
+        except Exception as exc:
+            # Ha a kezdőképernyő importja vagy felépítése hibázik,
+            # a főablak akkor is elindul, és a hiba olvasható marad.
+            self.home_page = QWidget()
+            fallback_layout = QVBoxLayout(self.home_page)
+            fallback_layout.setContentsMargins(24, 24, 24, 24)
+            fallback_title = QLabel("Az Áttekintés nem tölthető be")
+            fallback_title.setFont(QFont("", 18, QFont.Weight.DemiBold))
+            fallback_layout.addWidget(fallback_title)
+            fallback_detail = QLabel(
+                f"{type(exc).__name__}: {exc}\\n\\n"
+                "Ellenőrizd, hogy a resources/startscreen.py fájl elérhető-e."
+            )
+            fallback_detail.setWordWrap(True)
+            fallback_detail.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            fallback_layout.addWidget(fallback_detail)
+            fallback_layout.addStretch(1)
         self.views.addWidget(self.home_page)
 
         self._module_pages = {}
@@ -372,9 +371,16 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Kezdőlap", 2500)
 
     def apply_theme(self, theme_name: str):
-        if theme_name not in THEMES:
+        all_themes = available_themes()
+        if theme_name not in all_themes:
             theme_name = "Alapértelmezett"
-        QApplication.instance().setStyleSheet(THEMES[theme_name])
+
+        if theme_name in THEMES:
+            stylesheet = THEMES[theme_name]
+        else:
+            stylesheet = theme_stylesheet(all_themes[theme_name])
+
+        QApplication.instance().setStyleSheet(stylesheet)
         self.settings["theme"] = theme_name
         if hasattr(self, "preset_combo") and self.preset_combo.currentText() != theme_name:
             self.preset_combo.blockSignals(True)
@@ -387,21 +393,82 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Témasablon: {theme_name}", 3000)
 
     def _save_current_settings(self):
-        self.settings["window_width"] = self.width()
-        self.settings["window_height"] = self.height()
         try:
+            # A meglévő settings.json továbbra is megőrzi a főprogram beállításait.
             save_settings(self.settings)
+            # Az új beállításablak fájljába csak a geometriai értékeket írjuk vissza.
+            prefs = load_preferences()
+            if prefs.get("remember_window_geometry", True):
+                prefs["window_width"] = self.width()
+                prefs["window_height"] = self.height()
+                prefs["window_x"] = self.x()
+                prefs["window_y"] = self.y()
+                save_preferences(prefs)
         except OSError as exc:
             QMessageBox.warning(self, "Beállítási hiba", f"A beállítások nem menthetők:\n{exc}")
 
+    def log_msg(self, message: str):
+        """Egységes napló-visszajelzés a főprogramba integrált modulok számára."""
+        self.statusBar().showMessage(str(message), 7000)
+
+    def call_worker(self, function: Callable, on_success: Callable):
+        """Háttérszálban futtat egy modulfeladatot, a visszahívást a GUI-szálon kezeli."""
+        worker = CallableWorker(function, self)
+        self._workers.add(worker)
+        worker.result_ready.connect(on_success)
+        worker.failed.connect(
+            lambda message: QMessageBox.warning(self, "Háttérművelet hibája", message)
+        )
+        worker.finished.connect(lambda w=worker: self._workers.discard(w))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        return worker
+
     def open_preferences(self):
-        dialog = PreferencesDialog(self.settings, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.settings = dialog.get_settings()
-            self.apply_theme(self.settings["theme"])
-            self.resize(self.settings["window_width"], self.settings["window_height"])
-            self._save_current_settings()
-            self.statusBar().showMessage("Beállítások mentve.", 3000)
+        """A beállításokat a főablak munkaterületén belül mutatja meg."""
+        current = self.views.currentWidget()
+        if current is not getattr(self, "_preferences_page", None):
+            self._preferences_return_page = current
+
+        page = getattr(self, "_preferences_page", None)
+        if page is None:
+            page = PreferencesDialog(self.settings, self.views)
+            page.settings_saved.connect(self._preferences_saved)
+            page.cancel_requested.connect(self.close_preferences_page)
+            self._preferences_page = page
+            self.views.addWidget(page)
+        else:
+            # A külső settings változásait is átadjuk, a beállításoldal újranyitásakor.
+            page.settings.update(self.settings)
+
+        self.views.setCurrentWidget(page)
+        self.statusBar().showMessage("Beállítások", 2500)
+
+    def close_preferences_page(self):
+        """Visszatér a Beállítások megnyitása előtti nézethez."""
+        target = getattr(self, "_preferences_return_page", self.home_page)
+        if target is None or target is getattr(self, "_preferences_page", None):
+            target = self.home_page
+        self.views.setCurrentWidget(target)
+
+    def _preferences_saved(self, updated: dict):
+        # A beállításmodul mentette a preferences.json fájlt; a főablak a
+        # saját settings.json értékeit frissíti anélkül, hogy moduladatokat törölne.
+        self.settings.update(updated)
+        self.apply_theme(self.settings.get("theme", "Alapértelmezett"))
+        self.preferences = load_preferences()
+        if self.settings.get("remember_window_geometry", True):
+            self.resize(
+                int(self.settings.get("window_width", 1100)),
+                int(self.settings.get("window_height", 720)),
+            )
+        if self.preferences.get("startup_state") == "maximized":
+            self.showMaximized()
+        else:
+            self.showNormal()
+        self._save_current_settings()
+        self.close_preferences_page()
+        self.statusBar().showMessage("Beállítások mentve.", 3000)
 
     def open_file_manager_window(self):
         """A fájlkezelőt külön, önálló ablakban nyitja meg; meglévőt előtérbe hoz."""
@@ -418,7 +485,7 @@ class MainWindow(QMainWindow):
         try:
             from modules.file_manager import open_module as open_file_manager
             window = open_file_manager(parent=None, settings=self.settings)
-            window.setWindowTitle("Redmi Control Center — Fájlkezelő")
+            window.setWindowTitle("Android Control Center — Fájlkezelő")
             window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self._file_manager_window = window
             window.destroyed.connect(lambda *_: setattr(self, "_file_manager_window", None))
@@ -434,6 +501,28 @@ class MainWindow(QMainWindow):
             )
 
     def open_module(self, name: str):
+        if name == "Rendszerfüggőségek":
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            layout.setContentsMargins(0, 0, 0, 0)
+            try:
+                from modules.dependencies import DependencyCheckerWidget
+                widget = DependencyCheckerWidget(page, settings=self.settings)
+                layout.addWidget(widget)
+            except Exception as exc:
+                heading = QLabel("A Rendszerfüggőségek modul nem tölthető be")
+                heading.setFont(QFont("", 16, QFont.Weight.DemiBold))
+                layout.addWidget(heading)
+                detail = QLabel(str(exc))
+                detail.setWordWrap(True)
+                detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                layout.addWidget(detail)
+            self.views.addWidget(page)
+            self._module_pages[name] = page
+            self.views.setCurrentWidget(page)
+            self.statusBar().showMessage("Megnyitva: Rendszerfüggőségek", 3000)
+            return
+
         # A modulnézetek a főablak munkaterületében jelennek meg; nem nyitunk
         # külön QMainWindow-t, és a kezdőlapot sem töröljük.
         if name in self._module_pages:
@@ -460,6 +549,31 @@ class MainWindow(QMainWindow):
             self._module_pages[name] = page
             self.views.setCurrentWidget(page)
             self.statusBar().showMessage("Megnyitva: Képernyőtükrözés", 3000)
+            return
+
+        if name == "Virtuális kijelző és alkalmazások":
+            try:
+                from modules.virtual_screens import open_module as open_virtual_screens
+                page = open_virtual_screens(parent=self, settings=self.settings)
+            except Exception as exc:
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setContentsMargins(16, 16, 16, 16)
+                heading = QLabel("A Virtuális kijelző és alkalmazások modul nem tölthető be")
+                heading.setFont(QFont("", 16, QFont.Weight.DemiBold))
+                layout.addWidget(heading)
+                detail = QLabel(
+                    f"{exc}\\n\\nEllenőrizd, hogy a modules/virtual_screens.py fájl a helyén van-e, "
+                    "és a PyQt6, ADB, illetve scrcpy függőségek rendelkezésre állnak-e."
+                )
+                detail.setWordWrap(True)
+                detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                layout.addWidget(detail)
+                layout.addStretch(1)
+            self.views.addWidget(page)
+            self._module_pages[name] = page
+            self.views.setCurrentWidget(page)
+            self.statusBar().showMessage("Megnyitva: Virtuális kijelző és alkalmazások", 3000)
             return
 
         if name == "Fájlkezelő":
@@ -663,7 +777,7 @@ class MainWindow(QMainWindow):
         heading.setFont(QFont("", 18, QFont.Weight.DemiBold))
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(heading)
-        detail = QLabel("Ez a modul még nincs implementálva. A felülete a főablakban fog megjelenni.")
+        detail = QLabel("Ehhez a menüponthoz nem tartozik betölthető modul. Ellenőrizd a modulregisztert és a fájlneveket.")
         detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         detail.setWordWrap(True)
         layout.addWidget(detail)
@@ -825,7 +939,7 @@ class MainWindow(QMainWindow):
         image_label.setMinimumWidth(320)
         image_label.setMaximumWidth(390)
         # A névjegykép külön fájlból töltődik be; nem növeli a main.py méretét.
-        image_path = Path(__file__).resolve().with_name("scrcpy.png")
+        image_path = find_app_image()
         pixmap = QPixmap(str(image_path))
         if not pixmap.isNull():
             image_label.setPixmap(pixmap.scaled(
@@ -833,14 +947,14 @@ class MainWindow(QMainWindow):
                 Qt.TransformationMode.SmoothTransformation
             ))
         else:
-            image_label.setText("A scrcpy.png névjegykép nem található.")
+            image_label.setText("Az Android Control Center emblémája nem található.")
             image_label.setWordWrap(True)
         content.addWidget(image_label, 1)
 
         right = QVBoxLayout()
         right.setSpacing(12)
         title = QHBoxLayout()
-        red = QLabel("Redmi")
+        red = QLabel("Android")
         red.setObjectName("redTitle")
         red.setStyleSheet("font-size: 35px; font-weight: 700; color: #ff2028;")
         white = QLabel("Control Center")
@@ -855,7 +969,7 @@ class MainWindow(QMainWindow):
         line.setStyleSheet("background: #ff2028; max-height: 2px; border: none;")
         right.addWidget(line)
 
-        subtitle = QLabel("Xiaomi / Redmi telefonok kezelése Linuxon")
+        subtitle = QLabel("Android-telefonok kezelése Linuxon")
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
         right.addWidget(subtitle)
@@ -865,9 +979,9 @@ class MainWindow(QMainWindow):
         right.addWidget(version)
 
         description = QLabel(
-            "Eszköz a Xiaomi / Redmi telefonok kezeléséhez és karbantartásához Linux környezetben. "
-            "A program ADB-t, fastbootot és egyéb eszközöket használ a mindennapi feladatok "
-            "egyszerűsítéséhez."
+            "Android-telefonok elérésére, kezelésére és diagnosztikájára szolgáló Linuxos eszköz. "
+            "A program ADB-t, scrcpy-t és – ahol szükséges – fastbootot használ a mindennapi "
+            "feladatok egyszerűsítéséhez."
         )
         description.setObjectName("bodyText")
         description.setWordWrap(True)
@@ -921,9 +1035,14 @@ class MainWindow(QMainWindow):
         disclaimer_title.setObjectName("sectionLabel")
         right.addWidget(disclaimer_title)
         disclaimer = QLabel(
-            "A program használatáért semmilyen felelősséget nem vállalok. Meggyőződésem szerint "
-            "azonban atomháború esetén is működőképes marad, kivéve, ha a nukleáris csapás "
-            "következtében megsérül a Python-indító, az ADB, vagy valaki kihúzza a kábelt."
+            "A program használatáért semmilyen felelősséget nem vállalok. Ha elindítod, "
+            "a rendszered stabilitása, az időjárás, a gravitáció és a civilizáció jövője "
+            "kizárólag a te kockázatodra kerül. Egy globális hálózati összeomlás, három "
+            "napnyi digitális sötétség és az emberiség utolsó biztonsági mentésének elvesztése "
+            "után is előfordulhat, hogy a program még mindig egy hiányzó ADB-eszközt keres. "
+            "A fejlesztő nem vállal felelősséget a világvégéért, annak részleges visszavonásáért, "
+            "az idővonal összeomlásáért, illetve azért, ha az apokalipszis közepén valaki "
+            "kihúzza az USB-kábelt."
         )
         disclaimer.setObjectName("bodyText")
         disclaimer.setWordWrap(True)
@@ -939,6 +1058,14 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event):
+        running = [worker for worker in self._workers if worker.isRunning()]
+        if running:
+            QMessageBox.information(
+                self, "Művelet folyamatban",
+                "Háttérművelet fut. Várd meg a befejezését, majd zárd be a programot."
+            )
+            event.ignore()
+            return
         self._save_current_settings()
         # Avoid leaving a child scrcpy process behind when closing the main window.
         if self.scrcpy_process and self.scrcpy_process.state() != QProcess.ProcessState.NotRunning:
@@ -951,9 +1078,12 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setOrganizationName("RedmiControlCenter")
+    app.setOrganizationName("AndroidControlCenter")
     window = MainWindow()
     window.show()
+    startup = load_preferences().get("startup_state", "normal")
+    if startup == "maximized":
+        window.showMaximized()
     sys.exit(app.exec())
 
 
