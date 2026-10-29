@@ -1,83 +1,121 @@
-ANDROID CONTROL CENTER – ELSŐ INDÍTÁS
-====================================
+ANDROID CONTROL CENTER – GYORS INDÍTÁSI ÚTMUTATÓ
+================================================
 
-Az Android Control Center (ACC) egy fejlesztés alatt álló, Linuxon futó,
-PyQt6-alapú grafikus program Android-telefon ADB-kapcsolaton keresztüli
-kezeléséhez. Egyes képernyőkezelési funkciókhoz az scrcpy programot használja.
+A program fejlesztés alatt álló, Linuxon futó, PyQt6-alapú grafikus eszköz Android-telefonok ADB-kapcsolaton keresztüli kezeléséhez. A képernyőtükrözéshez és a virtuális képernyőkhöz az scrcpy-t is használja.
 
-1. RENDSZERKÖVETELMÉNYEK
------------------------
-- Linux; a telepítési példák Debian/Ubuntu-alapú rendszerekhez szólnak.
-- Python 3.
-- PyQt6 a programot futtató Python-környezethez.
-- ADB (Android Debug Bridge) a telefonhoz való kapcsolódáshoz.
-- scrcpy a képernyőtükrözési és kapcsolódó képernyőkezelési funkciókhoz.
+1. AMI SZÜKSÉGES
+----------------
+Alapkövetelmények:
+- Linux grafikus munkakörnyezet
+- Python 3
+- PyQt6
+- Android Platform Tools (adb)
+- scrcpy
+- Git a projekt klónozásához
 
-Debian/Ubuntu/AV Linux alatt a szükséges alapcsomagok telepítése terminálból:
+Debian, Ubuntu és AV Linux esetén az alapcsomagok telepítése:
 
     sudo apt update
-    sudo apt install python3 python3-pyqt6 adb scrcpy
+    sudo apt install git python3 python3-pyqt6 adb scrcpy
 
-Egyes kiegészítő funkciók további rendszerprogramokat igényelhetnek. Ilyen
-lehet például a fastboot, az xdg-utils vagy az lsusb. Nem minden funkcióhoz
-szükséges az összes opcionális eszköz.
+Egyes kiegészítő funkciókhoz további eszközök is jól jöhetnek, például:
+
+    sudo apt install fastboot xdg-utils usbutils aapt python3-send2trash
+
+Ezek közül nem mindegyik kötelező minden funkcióhoz. A projekt függőségellenőrző modulja további ellenőrzést és – Debian/Ubuntu-alapú rendszeren – telepítési segítséget is ad.
 
 2. A PROJEKT LETÖLTÉSE
----------------------
-Terminálban futtasd:
+----------------------
 
     git clone https://github.com/zsoltbihari/android-control-center.git
     cd android-control-center
 
-A projekt teljes könyvtárszerkezetét tartsd meg. A main.py-nak a projekt
-gyökérkönyvtárában kell maradnia, a modules könyvtárat pedig ne mozgasd el.
+A projekt könyvtárszerkezetét tartsd meg: a főprogram a gyökérkönyvtárban található, a modulok pedig a modules/ könyvtárban.
 
-3. A TELEFON ELŐKÉSZÍTÉSE
--------------------------
-1. Kapcsold be a telefonon a Fejlesztői beállításokat.
+3. A TELEFON ELŐKÉSZÍTÉSE USB-N
+-------------------------------
+1. Kapcsold be a telefon Fejlesztői beállításait.
 2. Engedélyezd az USB-hibakeresést.
-3. USB-kábellel csatlakoztasd a telefont a számítógéphez.
-4. Oldd fel a telefon képernyőzárát.
-5. Ha a telefon rákérdez, ellenőrizd és engedélyezd a számítógép ADB-kulcsát.
+3. Csatlakoztasd a telefont USB-kábellel a számítógéphez.
+4. Oldd fel a telefon képernyőjét.
+5. Ha megjelenik az ADB-hibakeresési engedélykérés, ellenőrizd a számítógép kulcsát, majd fogadd el.
 
-A kapcsolat ellenőrzése terminálban:
+A kapcsolat ellenőrzése:
 
     adb devices -l
 
-A telefon mellett a „device” állapot jelzi, hogy az ADB-kapcsolat engedélyezett.
-Az „unauthorized” állapot esetén a telefonon még jóvá kell hagyni a kérést.
-Ha a készülék egyáltalán nem jelenik meg, ellenőrizd az USB-kábelt, az
-USB-kapcsolat módját, az USB-hibakeresést és a Linux USB-jogosultságait.
+A készüléknek „device” állapotban kell megjelennie. Az „unauthorized” azt jelenti, hogy a telefonon még jóvá kell hagyni a kapcsolatot. Ha nem jelenik meg a készülék, ellenőrizd a kábelt, az USB-kapcsolatot, az USB-hibakeresést és a Linux USB-jogosultságait.
 
-4. A PROGRAM INDÍTÁSA
----------------------
-A projekt gyökérkönyvtárában – ott, ahol a main.py található – futtasd:
+4. A FŐPROGRAM INDÍTÁSA
+-----------------------
+A projekt gyökérkönyvtárában futtasd:
 
     /usr/bin/python3 ./main.py
 
-A terminálból történő indítás azért hasznos, mert a hibaüzenetek ott jelennek
-meg. Ha a program azt írja, hogy a PyQt6 nem található, ellenőrizd, hogy a
-PyQt6 ugyanahhoz a Pythonhoz van-e telepítve, amellyel a programot indítod.
+A terminálból indításkor a hibaüzenetek is láthatók maradnak. Ha a PyQt6-modult nem találja, ellenőrizd, hogy a PyQt6 azzal a Python-telepítéssel érhető-e el, amelyet a parancs használ.
 
-5. FONTOS TUDNIVALÓK
--------------------
-- A program jelenleg béta/fejlesztési állapotú; egyes funkciók hibásak vagy
-  befejezetlenek lehetnek.
-- Az ADB végzi az Android-rendszer lekérdezését és az általa támogatott
-  vezérlési műveleteket. Az scrcpy elsősorban a képernyőkép megjelenítését és
-  az interaktív képernyővezérlést biztosítja.
-- Az elérhető funkciók a telefon Android-verziójától, engedélyeitől és a
-  telepített rendszerprogramoktól is függhetnek.
-- A program nem kerüli meg a képernyőzárat, az FRP-t vagy a Google-fiók
-  védelmét; a telefonon szükséges engedélyeket szabályosan meg kell adni.
+5. MODULOK INDÍTÁSA A MAIN.PY NÉLKÜL
+------------------------------------
+A modules/ könyvtár moduljai külön Python-fájlok. Az önálló indításhoz lépj be a projekt gyökérkönyvtárába, majd használd a megfelelő parancsot. Például:
 
-6. HIBA ESETÉN
---------------
-Ha nem indul el a program, másold ki a terminálban megjelenő teljes
-hibaüzenetet. Telefonkapcsolati probléma esetén az alábbi parancs kimenete is
-hasznos:
+    /usr/bin/python3 ./modules/connections.py
+
+Az alábbi modulokhoz külön indítási pont tartozik:
+
+    /usr/bin/python3 ./modules/applications.py
+    /usr/bin/python3 ./modules/connections.py
+    /usr/bin/python3 ./modules/contacts.py
+    /usr/bin/python3 ./modules/dependencies.py
+    /usr/bin/python3 ./modules/device_info.py
+    /usr/bin/python3 ./modules/diagnostics.py
+    /usr/bin/python3 ./modules/file_manager.py
+    /usr/bin/python3 ./modules/google_accounts.py
+    /usr/bin/python3 ./modules/screen_mirroring.py
+    /usr/bin/python3 ./modules/storage.py
+    /usr/bin/python3 ./modules/virtual_screens.py
+
+A külön indítás nem minden modulnál jelent teljesen azonos működést a főprogramba ágyazott használattal. Az applications.py önálló indítása például felület-előnézeti mód; a főprogram által biztosított egyes telefonműveletekhez a main.py-ból kell megnyitni. A modulok a telefonos funkciókhoz továbbra is igényelhetik az ADB-t, a képernyőkezelési funkciók pedig az scrcpy-t.
+
+6. MELYIK MODUL MIT CSINÁL?
+---------------------------
+- applications.py – Android-alkalmazások listázása, keresése és szűrése; a kapcsolódó alkalmazásműveletek felülete.
+- connections.py – ADB-szerver és USB-s eszközök ellenőrzése, telefon-IP és hálózati információk, Wi-Fi-s ADB-kapcsolat indítása és ellenőrzése.
+- contacts.py – Helyi névjegyadatok kezelése, keresés, szűrés, duplikátumjelzés, JSON/CSV/VCF import-export és biztonsági másolat.
+- dependencies.py – Szükséges és opcionális rendszerprogramok/Python-csomagok ellenőrzése, hiányzó összetevők telepítésének segítése.
+- device_info.py – Telefon-, Android-, build-, gyártói rendszer- és hardveradatok megjelenítése, másolása és exportálása.
+- diagnostics.py – Hálózati interfészek, útvonalak, DNS- és kapcsolati adatok, valamint diagnosztikai és forgalmi információk vizsgálata.
+- file_manager.py – Kétpaneles fájlkezelő a telefon ADB-n keresztül elérhető tárhelyéhez.
+- google_accounts.py – Google Play-/fiókbejegyzésekhez és FRP-hez kapcsolódó rendszeradatok diagnosztikai áttekintése; nem old fel FRP-zárat.
+- screen_mirroring.py – scrcpy indítása/leállítása, eszközválasztás és az ablakforgatás lehetőségeinek kezelése.
+- storage.py – A telefon elérhető tárhelyének és fájljainak felmérése.
+- virtual_screens.py – scrcpy-alapú virtuális képernyő- és alkalmazásprofilok, profilbeállítások, alkalmazásindítás, futó scrcpy-folyamatok kezelése.
+
+A program bétaállapotú: egyes funkciók befejezetlenek lehetnek, és a ténylegesen elérhető műveleteket az Android-verzió, a készülék jogosultságai és a telepített külső programok is befolyásolják.
+
+7. HALADÓ HIBAELHÁRÍTÁS
+-----------------------
+ADB-eszközök listázása:
 
     adb devices -l
 
-Projekt:
+ADB-verzió:
+
+    adb version
+
+scrcpy-verzió:
+
+    scrcpy --version
+
+Python és PyQt6 ellenőrzése ugyanazzal a Pythonnal:
+
+    /usr/bin/python3 --version
+    /usr/bin/python3 -c "import PyQt6; print('PyQt6 rendben')"
+
+Ha egy modul nem indul, a projekt gyökérkönyvtárából futtasd, és mentsd el a terminál teljes hibaüzenetét. Ha az ADB „unauthorized” állapotot jelez, hagyd jóvá a kapcsolatot a telefonon. Ha az scrcpy nem indul, előbb ellenőrizd, hogy az ADB-kapcsolat működik-e, majd nézd meg a modul naplóját.
+
+8. BIZTONSÁG
+------------
+Csak olyan telefont csatlakoztass, amelynek kezelésére jogosult vagy. A program nem kerüli meg a képernyőzárat, a Google-fiók védelmét vagy az FRP-t. A névjegyek, naplók, exportok és biztonsági másolatok személyes adatokat tartalmazhatnak; kezeld őket bizalmasan. Wi-Fi-s ADB-t csak megbízható hálózaton használj.
+
+Részletes leírás és hibajelentés: lásd a README.md fájlt és a GitHub-projektet:
 https://github.com/zsoltbihari/android-control-center

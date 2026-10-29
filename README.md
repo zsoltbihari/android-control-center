@@ -1,267 +1,312 @@
-REDMI CONTROL CENTER
-====================
+# Android Control Center
 
-A Redmi Control Center egy Linuxos grafikus kezeloprogram Android-telefon ADB-kapcsolaton keresztuli eleresehez. A felulet PyQt6-ra epul, a telefonos muveletekhez az Android Debug Bridge (ADB), a kepernyotukrozeshez pedig az scrcpy kulso programot hasznalja.
+Az Android Control Center egy fejlesztés alatt álló, Linuxos, PyQt6-alapú grafikus alkalmazás Android-telefonok ADB-kapcsolaton keresztüli kezeléséhez. A képernyőtükrözési és virtuális képernyős funkciókhoz az `scrcpy` külső programot használja.
 
-A program modulokra osztott: a main.py adja a foablakot, a menurendszert, a munkateruletet, a temakat es a beallitasokat. A reszletes funkciokat a modules konyvtarban talalhato modulok valositjak meg.
+A projekt bétaállapotú. A funkciók egy része fejlesztés alatt állhat, és a tényleges működés függ az Android-verziótól, a telefon engedélyeitől, az ADB-kapcsolattól, valamint a telepített rendszerprogramoktól.
 
-FONTOS: a program Android-hibakeresesre es ADB-kapcsolatra tamaszkodik. Nem keruli meg a telefon biztonsagi engedelyeit, a Google-fiokhoz tartozo vedelmet vagy az Android parositasat.
+## Tartalomjegyzék
 
+- [Kezdés](#kezdés)
+- [Rendszerkövetelmények és telepítés](#rendszerkövetelmények-és-telepítés)
+- [A telefon előkészítése](#a-telefon-előkészítése)
+- [Indítás: főprogram és önálló modulok](#indítás-főprogram-és-önálló-modulok)
+- [Funkciók és modulok](#funkciók-és-modulok)
+- [Beállítások és helyi adatok](#beállítások-és-helyi-adatok)
+- [Hibaelhárítás](#hibaelhárítás)
+- [Biztonság és adatvédelem](#biztonság-és-adatvédelem)
+- [Hibajelentés és közreműködés](#hibajelentés-és-közreműködés)
+- [Licenc](#licenc)
 
-1. A PROGRAM INDÍTÁSA
----------------------
+## Kezdés
 
-SZUKSEGES PROGRAMOK
-- Python 3.10 vagy ujabb
-- PyQt6
-- Android Platform Tools (az adb paranccsal)
-- scrcpy a kepernyotukrozeshez
-- Linuxos grafikus munkakornyezet
+A legegyszerűbb út Debian/Ubuntu/AV Linux alatt:
 
-Az egyes modulok tovabbi kulso eszkozoket is hasznalhatnak. Ha valamelyik program hianyzik, az ahhoz tartozo funkcio nem feltetlenul mukodik.
+```bash
+sudo apt update
+sudo apt install git python3 python3-pyqt6 adb scrcpy
+git clone https://github.com/zsoltbihari/android-control-center.git
+cd android-control-center
+/usr/bin/python3 ./main.py
+```
 
-ELSO INDÍTÁS
-1. Tedd a projekt fajljait egy kozos konyvtarba.
-2. A modulokat tartsd a modules alkonyvtarban.
-3. Csatlakoztasd a telefont USB-kabellel, vagy allits be engedelyezett ADB-kapcsolatot Wi-Fi-n.
-4. A telefon Fejlesztoi beallitasok menujeben engedelyezd az USB-hibakeresest.
-5. USB-kapcsolat eseten oldd fel a telefont, majd fogadd el a szamitogep ADB-hibakeresesi kulcsara vonatkozo engedelykerest.
-6. Inditsd el a programot a projekt konyvtarabol.
+A teljes első indítási leírás az [`olvasd.txt`](olvasd.txt) fájlban található.
 
-A program inditasa terminalbol:
+## Rendszerkövetelmények és telepítés
 
-    python3 main.py
+### Alapkövetelmények
 
-A parancsot a projekt gyokerkonyvtaraban kell kiadni, ahol a main.py talalhato. A parancs nem a bongeszobe vagy a telefonra valo. Ha a Python 3 es a PyQt6 nincs telepitve, eloszor ezeket kell telepiteni.
+- Linuxos grafikus munkakörnyezet
+- Python 3
+- PyQt6 ugyanahhoz a Python-környezethez telepítve, amellyel a program indul
+- Android Platform Tools (`adb`)
+- `scrcpy` a képernyőtükrözéshez és a virtuális képernyőkhöz
+- Git a repository klónozásához
 
-ADB-KAPCSOLAT ELLENŐRZÉSE
-A telefon csatlakoztatasa utan az ADB-eszkozlistaban a keszuleknek engedelyezett, „device” allapotban kell megjelennie. Ha „unauthorized” allapot lathato, oldd fel a telefont es fogadd el az engedelykerest. Ha a telefon nem lathato, ellenorizd a kabelt, az USB-kapcsolatot, az ADB telepiteset es a telefon hibakeresesi beallitasait.
+Debian/Ubuntu/AV Linux rendszeren az alapcsomagok:
 
-Wi-Fi-s ADB-kapcsolatnal a telefon es a szamitogep halozati elerhetosege, valamint az Android parositasai es engedelyei is szuksegesek lehetnek. A Kapcsolatok modul csak felhasznaloi muvelet utan kezd csatlakozast; nem probalja megkerulni az Android engedelyezesi folyamatait.
+```bash
+sudo apt update
+sudo apt install git python3 python3-pyqt6 adb scrcpy
+```
 
+Egyes kiegészítő funkciókhoz további eszközök is szükségesek vagy hasznosak lehetnek:
 
-2. A MAIN.PY – A FŐPROGRAM
---------------------------
+```bash
+sudo apt install fastboot xdg-utils usbutils aapt python3-send2trash
+```
 
-A main.py a Redmi Control Center foablaka es kozponti vezerloje. Nem ez vegzi az osszes telefonos muveletet: a menupontok a modules konyvtar megfelelo moduljait nyitjak meg.
+Ezek nem mindegyike kötelező minden funkcióhoz. A `modules/dependencies.py` grafikus függőségellenőrzővel megtekinthetők az alapvető és opcionális összetevők.
 
-Fo feladatai:
-- Letrehozza a foablakot, a menurendszert es a munkateruletet.
-- Kezeli a modulnezetek megnyitasat es a mar megnyitott nezetek kozotti valtast.
-- Kezeli a program beallitasait, az ablak meretet es a temavalasztast.
-- Elmenti a beallitasokat a felhasznalo sajat konfiguracios konyvtaraba.
-- A modulokat a kozos beallitasokkal tudja megnyitni.
-- A fajlkezelot kulon ablakban is meg tudja nyitni.
-- A kepernyotukrozes funkcioit a Kepernyo menubol teszi elerhetove.
+### Letöltés
 
-A program temai: Alapertelmezett, Matrix, Zombie, Vampire, Barbie es Pink pussycat. A tenylegesen elerheto menupontokat a program aktualis verzioja es a telepitett modulok hatarozzak meg.
+```bash
+git clone https://github.com/zsoltbihari/android-control-center.git
+cd android-control-center
+```
 
-A fo beallitasfajl helye:
+A könyvtárszerkezetet tartsd meg. A `main.py` a projekt gyökerében van, a különálló modulok a `modules/` könyvtárban.
 
-    ~/.config/redmi-control-center/settings.json
+## A telefon előkészítése
 
-Egyes modulok sajat beallitasi vagy adatfajlokat is hasznalnak. A ~ jel a sajat felhasznaloi konyvtarat jelenti, ami Linuxon altalaban /home/felhasznalonev.
+1. Kapcsold be a telefon Fejlesztői beállításait.
+2. Engedélyezd az USB-hibakeresést.
+3. USB-kábellel csatlakoztasd a telefont a Linuxos géphez.
+4. Oldd fel a telefon képernyőjét.
+5. Ha megjelenik az ADB-hibakeresési engedélykérés, ellenőrizd a számítógép kulcsát, majd fogadd el.
 
+Ellenőrzés:
 
-3. MODULOK
-----------
+```bash
+adb devices -l
+```
 
-A modulok a modules konyvtarban vannak. A foprogram ezeket a munkateruleten belul nyitja meg, ahol ezt a modul tamogatja. Egyes modulok onalloan is indithatok, de a mindennapi hasznalathoz a main.py elinditasa ajanlott.
+A készüléknek `device` állapotban kell megjelennie. Az `unauthorized` azt jelenti, hogy a telefonon még jóvá kell hagyni a kapcsolatot. Ha a telefon nem jelenik meg, ellenőrizd az USB-kábelt, az USB-kapcsolat módját, az USB-hibakeresést és a Linux USB-jogosultságait.
 
+Wi-Fi-s ADB-kapcsolat is használható, ha azt a telefon és az Android-verzió támogatja, és a kapcsolatot szabályosan engedélyezted. A párosítás és a hálózati elérhetőség feltételei Android-verziónként eltérhetnek.
 
-3.1. Kapcsolatok – connections.py
----------------------------------
-Az ADB-kapcsolatok ellenorzesere es kezelesere szolgal.
+## Indítás: főprogram és önálló modulok
 
-- Az ADB-szerver allapotanak ellenorzese es inditasa.
-- USB-n csatlakozo ADB-eszkozok felismerese.
-- A telefon IP-cimeinek felderitese USB-kapcsolat mellett.
-- A Linuxos halozat, hotspot es utvonal-informaciok megjelenitese.
-- Wi-Fi-s ADB-kapcsolat kezdemenyezese, alapertelmezetten az 5555-os porttal.
-- A kapcsolat ellenorzese tenyleges ADB-paranccsal.
-- Az ADB-szerver ujrainditasa vagy leallitasa.
-- Reszletes naplozas es hatterszalas parancsvegrehajtas.
+### Főprogram
 
-A Wi-Fi-s csatlakozas elott ellenorizd, hogy a telefonon az adott kapcsolati mod engedelyezve van-e. A modul nem keruli meg az Android parositas vagy hibakereses altal megkovetelt engedelyeit.
+A projekt gyökérkönyvtárából:
 
+```bash
+/usr/bin/python3 ./main.py
+```
 
-3.2. Névjegyek – contacts.py
-----------------------------
-A nevjegyek helyi kezeleset es a telefonos adatforrasok attekinteset tamogatja.
+A `main.py` adja a központi ablakot, a menürendszert, a modulok közötti navigációt, valamint a közös beállítások kezelését.
 
-- ADB-eszkozfelderites es keszulekvalasztas.
-- Fulre osztott felulet, keresesi es forras szerinti szurok.
-- Helyi JSON-adatallomany, biztonsagos mentes es biztonsagi masolat.
-- JSON-, CSV- es VCF-import/export alapok.
-- Kereses, forras szerinti szures, masolas es duplikatumjelzes.
-- Tarcsazo es SMS-szerkeszto, amelyek a telefon megfelelo alkalmazasat nyitjak meg.
-- Szerkesztheto europai orszagkodtabla.
-- Importalasi elonezet es nevjegyek egymas melletti osszehasonlitasa.
-- ADB-eszkozfelderites es telefonallapot-figyeles hatterszalban.
+### Minden modul külön is indítható
 
-Fontos korlat: a modul nem valosit meg teljes Android-nevjegyszinkronizalast, es a telefonon keresztuli SMS-kuldes sem resze a jelenlegi funkcioknak. A hangrogzites lehetosegeit az Android, a scrcpy es a kivalasztott backend korlatai befolyasolhatjak. A helyi nevjegyadatok a felhasznalo sajat adatkoonyvtaraba kerulnek.
+A `modules/` könyvtár moduljai külön Python-fájlok, saját közvetlen indítási ponttal. A főprogram nélkül, a projekt gyökérkönyvtárából az alábbi parancsokkal próbálhatók ki:
 
+```bash
+/usr/bin/python3 ./modules/applications.py
+/usr/bin/python3 ./modules/connections.py
+/usr/bin/python3 ./modules/contacts.py
+/usr/bin/python3 ./modules/dependencies.py
+/usr/bin/python3 ./modules/device_info.py
+/usr/bin/python3 ./modules/diagnostics.py
+/usr/bin/python3 ./modules/file_manager.py
+/usr/bin/python3 ./modules/google_accounts.py
+/usr/bin/python3 ./modules/screen_mirroring.py
+/usr/bin/python3 ./modules/storage.py
+/usr/bin/python3 ./modules/virtual_screens.py
+```
 
-3.3. Alkalmazások – applications.py
------------------------------------
-Az Android-alkalmazasok kezelesere szolgalo modul.
+**Fontos különbség:** az önálló indíthatóság azt jelenti, hogy a modul saját ablakban elindítható; nem garantálja, hogy minden funkciója pontosan ugyanúgy működik, mint a főprogram által biztosított környezetben. Különösen az `applications.py` közvetlen indítása felület-előnézeti mód: egyes, a főprogram gazdakörnyezetétől függő telefonműveletekhez a modult a `main.py`-ból kell megnyitni. Az ADB- és scrcpy-alapú műveletekhez ezeknek a külső eszközöknek továbbra is elérhetőnek kell lenniük.
 
-- ADB-eszkoz kivalasztasa es az eszkozlista frissitese.
-- A telefonon talalhato alkalmazascsomagok listazasa.
-- Kereses alkalmazasnev vagy csomagnev alapjan.
-- Felhasznaloi alkalmazasok, rendszeralkalmazasok vagy az osszes alkalmazas megjelenitese.
-- Az engedelyezett alkalmazasokra szukites.
-- Alkalmazasokkal kapcsolatos tovabbi muveletek es allapotok kezelese a modul sajat feluleten.
+## Funkciók és modulok
 
-Az alkalmazasok listaja a telefonrol, ADB-n keresztul szarmazik. A rendszeralkalmazasok es a felhasznalo altal telepitett alkalmazasok kulon szurhetok.
+### Kezdő szint: csatlakozás és alapadatok
 
+#### `connections.py` – Kapcsolatok
 
-3.4. Eszközadatok – device_info.py
-----------------------------------
-A telefon azonosito- es rendszeradatainak attekintesere szolgal.
+- ADB-szerver állapotának ellenőrzése és indítása
+- USB-n csatlakozó ADB-eszközök felismerése
+- Telefon IP-címeinek lekérdezése USB-kapcsolat mellett, ahol ez lehetséges
+- Linuxos hálózat, hotspot és útvonal-információk megjelenítése
+- Wi-Fi-s ADB-kapcsolat kezdeményezése, alapértelmezetten az 5555-ös port használatával
+- A kapcsolat ellenőrzése tényleges ADB-paranccsal
+- ADB-szerver újraindítása vagy leállítása
+- Részletes naplózás és háttérszálas parancsvégrehajtás
 
-- Gyarto, marka, modell es eszkoznev.
-- Android-verzio es API-szint.
-- Buildazonosito es biztonsagi javitas.
-- MIUI- vagy HyperOS-verzio, ha a keszulek ezeket az adatokat kozli.
-- Processzor-/hardverplatformmal es ABI-val kapcsolatos adatok.
-- Bootloader- es egyes rendszerbiztonsagi tulajdonsagok.
+#### `device_info.py` – Eszközadatok
 
-Az adatok ADB-parancsokkal kerulnek lekerdezesre. A megjelenitheto mezok az Android-verziotol es a keszulek altal kozolt tulajdonsagoktol fuggenek.
+- Gyártó, márka, modell és eszköznév
+- Android-verzió és API-szint
+- Buildazonosító és biztonsági javítás szintje
+- MIUI-/HyperOS-verzió, ha a készülék közli
+- Processzor-/hardverplatform és ABI-adatok
+- Bootloader- és egyes rendszerbiztonsági tulajdonságok
+- Adatok másolása és exportálása
 
+A mezők elérhetősége az Android-verziótól és a készülék által közölt tulajdonságoktól függ.
 
-3.5. Hálózati diagnosztika – diagnostics.py
--------------------------------------------
-A telefon halozati allapotanak es kapcsolati adatainak vizsgalatara szolgal.
+### Haladó felhasználói szint: alkalmazások, fájlok és adatok
 
-- Aktiv halozati interfeszek es IP-utvonalak.
-- Wi-Fi- es kapcsolati allapotadatok.
-- DNS-cimek.
-- A telefon halozati forgalmaval kapcsolatos rendszeradatok.
-- A telefon egyes rendszer-tulajdonsagai.
-- Diagnosztikai pillanatfelvetel es forgalmi grafikonok.
+#### `applications.py` – Alkalmazások
 
-A megjelenitett adatok az Android-verziotol, a jogosultsagoktol es a rendszer altal elerhetove tett informacioktol fuggnek.
+- ADB-eszköz kiválasztása és az eszközlista frissítése
+- A telefonon található alkalmazáscsomagok listázása
+- Keresés alkalmazásnév vagy csomagnév alapján
+- Felhasználói alkalmazások, rendszeralkalmazások vagy az összes alkalmazás szűrése
+- Engedélyezett alkalmazásokra szűkítés
+- Alkalmazásokhoz kapcsolódó további műveletek és állapotok kezelése a modul felületén
 
+Az alkalmazáslista a telefonról, ADB-n keresztül származik. A funkciók elérhetőségét az Android korlátozásai befolyásolhatják.
 
-3.6. Fájlkezelő – file_manager.py
----------------------------------
-Ketpaneles fajlkezelot biztosit a telefon ADB-n keresztuli fajlrendszerehez. A modul ADB-n keresztul ellenorzi a keszulekeket, es lehetoseget ad a telefon elerheto tarhelyenek bongeszesere, valamint fajlok es konyvtarak kezelesere.
+#### `file_manager.py` – Fájlkezelő
 
-A telefonon elerheto utvonalak es muveletek az Android jogosultsagi szabalyaitol fuggnek. Az ADB-kapcsolatnak engedelyezett allapotban kell lennie. A foprogrambol a fajlkezelo a munkateruleten belul vagy kulon ablakban is megnyithato.
+- Kétpaneles fájlkezelő a telefon ADB-n keresztül elérhető fájlrendszeréhez
+- Elérhető tárhely és könyvtárak böngészése
+- Fájlok és könyvtárak kezelése az Android által engedélyezett határok között
+- Használat a főprogram munkaterületén belül vagy külön ablakban
 
+Nem garantált a teljes Android-fájlrendszer vagy más alkalmazások privát adatainak elérése.
 
-3.7. Google-fiókok és FRP-diagnosztika – google_accounts.py
-----------------------------------------------------------
-A modul ADB-n keresztul vizsgal keszulekadatokat, Google Play-szolgaltatasra utalo adatokat es a rendszer altal kiadott fiokbejegyzeseket. A felulet diagnosztikai informaciokat es naplot adhat a lekerdezesekrol.
+#### `contacts.py` – Névjegyek
 
-A lekert adatok az Android altal elerhetove tett rendszerkimenetbol szarmaznak, ezert nem garantalt, hogy minden keszuleken teljesek. A modul nem keruli meg az FRP-t, a Google-fiok vedelmet vagy az Android biztonsagi engedelyeit. A diagnosztika nem jelenti a zar feloldasat.
+- Helyi JSON-adatállomány és biztonsági másolat
+- JSON-, CSV- és VCF-import/export alapok
+- Keresés, forrás szerinti szűrés, másolás és duplikátumjelzés
+- Importálási előnézet és névjegyek összehasonlítása
+- Szerkeszthető európai országkódtábla
+- Tárcsázó- és SMS-szerkesztő felület, amely a telefon megfelelő alkalmazását nyithatja meg
+- ADB-eszközfelderítés és telefonállapot-figyelés háttérszálban
 
+**Korlátok:** a modul nem teljes Android-névjegyszinkronizáló. A helyi névjegyállomány nem feltétlenül azonos a telefon vagy a Google-fiók névjegyeivel. Az SMS-küldés nem része a jelenlegi funkcióknak.
 
-3.8. Képernyőtükrözés – screen_mirroring.py
-------------------------------------------
-A modul a kulso scrcpy programot inditja el, amellyel a telefon kepernyoje kulon Linuxos ablakban jelenitheto meg es – a telefon engedelyeitol fuggoen – egérrel es billentyuzettel vezerelheto.
+#### `storage.py` – Tárhelyelemző
 
-A feluleten megadhato vagy ellenorizheto:
-- Az ADB parancs eleresi utja.
-- Az scrcpy parancs eleresi utja.
-- A csatlakoztatott keszulek kivalasztasa.
-- A tukrozes inditasa es leallitasa.
-- Az ablakforgatasra vonatkozo probalkozasok es az ablakkezelo neve.
-- Az aktualis allapot es a naplo.
+- A telefon felhasználó által elérhető tárhelyének felmérése
+- Könyvtárstruktúra és fájlok vizsgálata
+- Fájlméret, módosítási idő és hozzáférési adatok összegyűjtése, ahol lehetséges
+- Tárhelyelemzést segítő műveletek
 
-A modul a tukrozest kulon folyamatkent inditja. A jelenlegi megvalositas nem agyazza be az scrcpy kepet a PyQt feluleten belulre. Az ablak elforgatasanak lehetosege a grafikus kornyezettol es az ablakkezelotol fugg.
+Az Android által korlátozott könyvtárak és adatok nem feltétlenül olvashatók.
 
+### Power user: diagnosztika és rendszerállapot
 
-3.9. Tárhelyelemző – storage.py
-------------------------------
-A telefon belso, felhasznalo altal elerheto tarhelyenek felmeresere szolgal. A modul ADB-n keresztul jarja be az elerheto konyvtarakat, es megprobalja osszegyujteni:
+#### `diagnostics.py` – Hálózati diagnosztika
 
-- A konyvtarstruktura adatait.
-- A fajlok es konyvtarak meretet es modositas idejet, ahol ez lekerdezheto.
-- Az elerhetosegi, olvashatosagi es irhatosagi informaciokat.
-- A tarhely elemzesehez es a fajlokhoz tartozo muveleteket.
+- Aktív hálózati interfészek és IP-útvonalak vizsgálata
+- Wi-Fi- és kapcsolati állapotadatok
+- DNS-címek
+- A rendszer által elérhető hálózati forgalmi adatok
+- Diagnosztikai pillanatfelvétel és forgalmi grafikonok
 
-A felmeres a telefon elerheto tarhelyere vonatkozik; nem jelenti a teljes Android-rendszerparticio szabad bongeszeset. Egyes mappak vagy adatok hozzafereset az Android korlatozhatja.
+A megjeleníthető információk a telefon Android-verziójától és a rendszer jogosultságaitól függenek.
 
+#### `google_accounts.py` – Google-fiókok és FRP-diagnosztika
 
-4. BEÁLLÍTÁSOK ÉS ADATOK
-------------------------
-A fo beallitasok helye:
+- ADB-n keresztüli rendszeradat-lekérdezések
+- Google Play-szolgáltatásokra utaló adatok és a rendszer által kiadott fiókbejegyzések áttekintése
+- Diagnosztikai információk és napló
 
-    ~/.config/redmi-control-center/settings.json
+**Ez diagnosztikai modul, nem FRP-feloldó.** Nem kerüli meg a Google-fiók védelmét, a képernyőzárat vagy az Android biztonsági engedélyeit. A lekérdezhető adatok készülékenként eltérhetnek.
 
-A program es a modulok ezen kivul kulon konfiguracios, helyi adat-, naplo-, export- vagy biztonsagimasolat-fajlokat is letrehozhatnak. A beallitas- es adatfajlokat ne torold addig, amig nem tudod, melyik modul hasznalja oket. Kulonosen a nevjegyek helyi adatallomanya es a biztonsagi masolatok tartalmazhatnak fontos adatokat.
+#### `dependencies.py` – Függőségellenőrző
 
+- Python, PyQt6 és alapvető rendszerprogramok jelenlétének ellenőrzése
+- ADB, scrcpy és egyéb opcionális eszközök állapotának megjelenítése
+- Hiányzó csomagok telepítésének kezdeményezése Debian/Ubuntu-alapú rendszereken
+- Csomagfrissítés indítása
+- Alapértelmezett terminál beállítása
 
-5. HIBAELHÁRÍTÁS
-----------------
-A program nem indul el:
-- Ellenorizd, hogy a Python 3 es a PyQt6 telepitve van-e.
-- A projekt gyokerkonyvtarabol inditsd: python3 main.py.
-- Ha hiba jelenik meg a terminalban, mentsd el a teljes hibauzenetet.
+A csomagtelepítéshez rendszergazdai jogosultság és működő csomagkezelő szükséges. A telepítési parancsokat a terminálban ellenőrizd, mielőtt jóváhagyod őket.
 
-A telefon nem jelenik meg:
-- Ellenorizd az USB-kabelt es a telefon USB-kapcsolatat.
-- Engedelyezd az USB-hibakeresest a telefonon.
-- Oldd fel a telefont es fogadd el az ADB-engedelykerest.
-- A Kapcsolatok modulban frissitsd az eszkozlistat.
+### Advanced: képernyőtükrözés és virtuális képernyők
 
-Az eszkoz „unauthorized” allapotu:
-- A telefon kepernyojen fogadd el a szamitogep ADB-kulcsat.
-- Ha az engedelykeres nem jelenik meg, ellenorizd a telefon hibakeresesi beallitasait es csatlakoztasd ujra az eszkozt.
+#### `screen_mirroring.py` – Képernyőtükrözés
 
-A kepernyotukrozes nem indul:
-- Ellenorizd, hogy az scrcpy telepitve van-e.
-- Ellenorizd, hogy az ADB-kapcsolat engedelyezett-e.
-- A kepernyotukrozes modulban frissitsd az eszkozlistat.
-- Ha szukseges, ellenorizd az ADB es scrcpy eleresi utjat.
+- ADB-eszközlista frissítése és készülékválasztás
+- `scrcpy` indítása és leállítása
+- Balra/jobbra 90 fokos forgatás és visszaállítás megkísérlése
+- Ablakkezelővel kapcsolatos információk és napló
 
-Egy modul nem mukodik:
-- Nem minden funkcio mukodik ADB-kapcsolat nelkul.
-- Az Android-verzio es a gyartoi korlatozasok egyes lekerdezeseket megakadalyozhatnak.
-- Olvasd el a modul naplojat, es a teljes hibauzenetet hasznald a hiba beazonositasahoz.
+A tükrözés külön `scrcpy`-folyamatot indít. A `scrcpy` képe a jelenlegi megvalósításban nem a PyQt-főablakba van beágyazva. Az ablak forgatásának eredménye a grafikus környezettől és az ablakkezelőtől függ.
 
+#### `virtual_screens.py` – Virtuális képernyők és alkalmazásprofilok
 
-6. BIZTONSÁG ÉS ADATVÉDELEM
----------------------------
-- Csak olyan telefont csatlakoztass, amelynek kezelesere jogosult vagy.
-- Az Android hibakeresesi engedelykereseit a telefonon kell elfogadni.
-- A program nem helyettesiti a Google-fiokot, a telefon jelszavat vagy a gyarto biztonsagi ellenorzeseit.
-- A helyi nevjegyek, naplok, exportok es biztonsagi masolatok szemelyes adatokat tartalmazhatnak. Ezeket kezeld bizalmasan.
-- Wi-Fi-s ADB-t csak megbizhato halozaton hasznalj, es kapcsold ki, ha mar nincs ra szukseg.
+- `scrcpy`-alapú virtuális képernyő-/alkalmazásindítási felület
+- Telefonon található alkalmazások listázása és kiválasztása
+- Alkalmazásprofilok létrehozása, mentése, kiválasztása és törlése
+- Profilonkénti képernyő- és indítási paraméterek beállítása
+- Kedvencek kezelése
+- Alkalmazás indítása a kiválasztott beállításokkal
+- Futó `scrcpy`-folyamatok állapotának ellenőrzése és leállítása
+- Napló megtekintése, másolása és törlése
 
+A lehetőségek a `scrcpy` verziójától, az Android-készüléktől és az elérhető ADB-kapcsolattól függenek. A „virtuális képernyő” itt nem egy teljes, külön Android-rendszert jelent.
 
-7. PROJEKTSTRUKTÚRA
--------------------
-A fo fajlok es modulok:
+## Beállítások és helyi adatok
 
-    main.py
-    modules/
-        applications.py
-        connections.py
-        contacts.py
-        device_info.py
-        diagnostics.py
-        file_manager.py
-        google_accounts.py
-        screen_mirroring.py
-        storage.py
+A fő beállításfájl helye:
 
-A main.py a kozponti grafikus alkalmazas. A modules konyvtar fajljai kulon funkcioegysegek. Mukodesuk a Python-, PyQt6-, ADB-, scrcpy- es Android-kornyezettol fugg.
+```text
+~/.config/redmi-control-center/settings.json
+```
 
+A `~` a saját felhasználói könyvtárat jelenti. Egyes modulok külön konfigurációs, helyi adat-, napló-, export- vagy biztonságimásolat-fájlokat is létrehozhatnak. A helyi névjegyadatokat, exportokat és mentéseket ne töröld addig, amíg nem ellenőrizted, hogy nincs-e bennük fontos adat.
 
-8. KÖZREMŰKÖDÉS ÉS HIBAJELENTÉS
--------------------------------
-Hibajelenteskor add meg:
-- A Linux-disztribucio es verzio adatait.
-- A Python, PyQt6, ADB es – ha erintett – az scrcpy verziojat.
-- A telefon modelljet es Android-verziojat.
-- A hiba pontos lepeseket es a teljes hiba- vagy naplouzenetet.
+## Hibaelhárítás
 
-Jelszot, Google-fiokhoz tartozo titkos adatot, telefonszamot vagy mas szemelyes adatot ne tegyel nyilvanos hibajegybe.
+### A program nem indul el
 
+```bash
+/usr/bin/python3 --version
+/usr/bin/python3 -c "import PyQt6; print('PyQt6 rendben')"
+```
 
-LICENC
-------
-A projekt licencet a repository LICENSE fajlja hatarozza meg, ha van ilyen. Ha nincs LICENSE fajl, a forraskod felhasznalasi feltetelei nincsenek egyertelmuen megadva.
+A projekt gyökérkönyvtárából indítsd a programot, és őrizd meg a terminál teljes hibaüzenetét.
+
+### A telefon nem jelenik meg vagy `unauthorized`
+
+```bash
+adb devices -l
+```
+
+Oldd fel a telefont, és fogadd el az ADB-kulcs engedélyezését. Ha az eszköz nem jelenik meg, ellenőrizd a kábelt, a telefon USB-módját, az USB-hibakeresést és a Linux USB-jogosultságait.
+
+### A képernyőtükrözés nem indul
+
+```bash
+adb version
+scrcpy --version
+adb devices -l
+```
+
+Előbb az ADB-kapcsolatot ellenőrizd. Ezután vizsgáld meg a `screen_mirroring.py` vagy `virtual_screens.py` naplóját, valamint az ADB és az scrcpy program elérési útját.
+
+### Egy modul nem működik
+
+- Indítsd el külön a modult a projekt gyökérkönyvtárából.
+- Mentsd el a terminálban látható teljes hibát.
+- Ellenőrizd az adott modulhoz szükséges külső eszközöket.
+- Vedd figyelembe az Android-verzió és a gyártói korlátozások hatását.
+
+## Biztonság és adatvédelem
+
+- Csak olyan telefont csatlakoztass, amelynek kezelésére jogosult vagy.
+- Az Android hibakeresési engedélykéréseit a telefonon kell jóváhagyni.
+- A program nem helyettesíti a Google-fiókot, a telefon jelszavát vagy a gyártó biztonsági ellenőrzéseit.
+- A helyi névjegyek, naplók, exportok és biztonsági másolatok személyes adatokat tartalmazhatnak.
+- Wi-Fi-s ADB-t csak megbízható hálózaton használj, és kapcsold ki, ha már nincs rá szükség.
+
+## Hibajelentés és közreműködés
+
+Hibajelentéskor hasznos megadni:
+
+- Linux-disztribúció és verzió
+- Python-verzió
+- PyQt6, ADB és – ha érintett – scrcpy verziója
+- telefonmodell és Android-verzió
+- a hiba előidézésének pontos lépései
+- a teljes hiba- vagy naplóüzenet
+
+Ne tegyél nyilvános hibajegybe jelszót, Google-fiókhoz tartozó titkos adatot, telefonszámot vagy más személyes adatot.
+
+## Licenc
+
+A felhasználási feltételeket a repository `LICENSE` fájlja határozza meg, ha van ilyen. Ha nincs `LICENSE` fájl, a forráskód felhasználási feltételei nincsenek egyértelműen megadva.
