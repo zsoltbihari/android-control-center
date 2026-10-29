@@ -1,0 +1,83 @@
+ANDROID CONTROL CENTER – ELSŐ INDÍTÁS
+====================================
+
+Az Android Control Center (ACC) egy fejlesztés alatt álló, Linuxon futó,
+PyQt6-alapú grafikus program Android-telefon ADB-kapcsolaton keresztüli
+kezeléséhez. Egyes képernyőkezelési funkciókhoz az scrcpy programot használja.
+
+1. RENDSZERKÖVETELMÉNYEK
+-----------------------
+- Linux; a telepítési példák Debian/Ubuntu-alapú rendszerekhez szólnak.
+- Python 3.
+- PyQt6 a programot futtató Python-környezethez.
+- ADB (Android Debug Bridge) a telefonhoz való kapcsolódáshoz.
+- scrcpy a képernyőtükrözési és kapcsolódó képernyőkezelési funkciókhoz.
+
+Debian/Ubuntu/AV Linux alatt a szükséges alapcsomagok telepítése terminálból:
+
+    sudo apt update
+    sudo apt install python3 python3-pyqt6 adb scrcpy
+
+Egyes kiegészítő funkciók további rendszerprogramokat igényelhetnek. Ilyen
+lehet például a fastboot, az xdg-utils vagy az lsusb. Nem minden funkcióhoz
+szükséges az összes opcionális eszköz.
+
+2. A PROJEKT LETÖLTÉSE
+---------------------
+Terminálban futtasd:
+
+    git clone https://github.com/zsoltbihari/android-control-center.git
+    cd android-control-center
+
+A projekt teljes könyvtárszerkezetét tartsd meg. A main.py-nak a projekt
+gyökérkönyvtárában kell maradnia, a modules könyvtárat pedig ne mozgasd el.
+
+3. A TELEFON ELŐKÉSZÍTÉSE
+-------------------------
+1. Kapcsold be a telefonon a Fejlesztői beállításokat.
+2. Engedélyezd az USB-hibakeresést.
+3. USB-kábellel csatlakoztasd a telefont a számítógéphez.
+4. Oldd fel a telefon képernyőzárát.
+5. Ha a telefon rákérdez, ellenőrizd és engedélyezd a számítógép ADB-kulcsát.
+
+A kapcsolat ellenőrzése terminálban:
+
+    adb devices -l
+
+A telefon mellett a „device” állapot jelzi, hogy az ADB-kapcsolat engedélyezett.
+Az „unauthorized” állapot esetén a telefonon még jóvá kell hagyni a kérést.
+Ha a készülék egyáltalán nem jelenik meg, ellenőrizd az USB-kábelt, az
+USB-kapcsolat módját, az USB-hibakeresést és a Linux USB-jogosultságait.
+
+4. A PROGRAM INDÍTÁSA
+---------------------
+A projekt gyökérkönyvtárában – ott, ahol a main.py található – futtasd:
+
+    /usr/bin/python3 ./main.py
+
+A terminálból történő indítás azért hasznos, mert a hibaüzenetek ott jelennek
+meg. Ha a program azt írja, hogy a PyQt6 nem található, ellenőrizd, hogy a
+PyQt6 ugyanahhoz a Pythonhoz van-e telepítve, amellyel a programot indítod.
+
+5. FONTOS TUDNIVALÓK
+-------------------
+- A program jelenleg béta/fejlesztési állapotú; egyes funkciók hibásak vagy
+  befejezetlenek lehetnek.
+- Az ADB végzi az Android-rendszer lekérdezését és az általa támogatott
+  vezérlési műveleteket. Az scrcpy elsősorban a képernyőkép megjelenítését és
+  az interaktív képernyővezérlést biztosítja.
+- Az elérhető funkciók a telefon Android-verziójától, engedélyeitől és a
+  telepített rendszerprogramoktól is függhetnek.
+- A program nem kerüli meg a képernyőzárat, az FRP-t vagy a Google-fiók
+  védelmét; a telefonon szükséges engedélyeket szabályosan meg kell adni.
+
+6. HIBA ESETÉN
+--------------
+Ha nem indul el a program, másold ki a terminálban megjelenő teljes
+hibaüzenetet. Telefonkapcsolati probléma esetén az alábbi parancs kimenete is
+hasznos:
+
+    adb devices -l
+
+Projekt:
+https://github.com/zsoltbihari/android-control-center
